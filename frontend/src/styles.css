@@ -1,0 +1,189 @@
+:root {
+  font-family: "Segoe UI", sans-serif;
+  color: #0f172a;
+  background: linear-gradient(160deg, #f5efe6 0%, #eef4ff 100%);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+}
+
+button,
+input,
+textarea {
+  font: inherit;
+}
+
+.app-shell {
+  min-height: 100vh;
+}
+
+.topbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  padding: 1.25rem 1.5rem;
+  background: rgba(255, 255, 255, 0.85);
+  border-bottom: 1px solid rgba(15, 23, 42, 0.08);
+  backdrop-filter: blur(12px);
+}
+
+.topbar h1,
+.panel h2,
+.card h3 {
+  margin: 0;
+}
+
+.eyebrow {
+  margin: 0 0 0.25rem;
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #b45309;
+}
+
+.nav {
+  display: flex;
+  gap: 0.75rem;
+}
+
+.nav a {
+  padding: 0.7rem 1rem;
+  border-radius: 999px;
+  color: #334155;
+  text-decoration: none;
+  background: #ffffff;
+}
+
+.nav a.active {
+  background: #0f172a;
+  color: #ffffff;
+}
+
+.page-content {
+  padding: 1.5rem;
+}
+
+.layout {
+  display: grid;
+  grid-template-columns: 360px minmax(0, 1fr);
+  gap: 1.5rem;
+}
+
+.panel,
+.map-panel {
+  background: rgba(255, 255, 255, 0.88);
+  border-radius: 24px;
+  overflow: hidden;
+  box-shadow: 0 24px 60px rgba(15, 23, 42, 0.12);
+}
+
+.panel {
+  padding: 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.card {
+  padding: 1rem;
+  border-radius: 18px;
+  background: #f8fafc;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.field input,
+.field textarea {
+  width: 100%;
+  padding: 0.85rem 1rem;
+  border-radius: 14px;
+  border: 1px solid #cbd5e1;
+  background: #ffffff;
+}
+
+.primary-button,
+.route-button {
+  border: none;
+  cursor: pointer;
+}
+
+.primary-button {
+  padding: 0.9rem 1rem;
+  border-radius: 14px;
+  background: #d9480f;
+  color: #ffffff;
+  font-weight: 600;
+}
+
+.route-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+}
+
+.route-list.compact li {
+  padding: 0.75rem 0.9rem;
+  border-radius: 14px;
+  background: #ffffff;
+}
+
+.route-button {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.85rem 1rem;
+  border-radius: 14px;
+  background: #ffffff;
+}
+
+.route-button.active {
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+
+.muted {
+  color: #475569;
+}
+
+.error {
+  color: #b91c1c;
+}
+
+.admin-form {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.map {
+  width: 100%;
+}
+
+@media (max-width: 960px) {
+  .layout {
+    grid-template-columns: 1fr;
+  }
+
+  .page-content {
+    padding: 1rem;
+  }
+
+  .topbar {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}

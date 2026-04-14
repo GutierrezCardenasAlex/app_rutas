@@ -1,0 +1,43 @@
+services:
+  db:
+    build:
+      context: ./db
+    container_name: rutas-db
+    environment:
+      POSTGRES_DB: rutasdb
+      POSTGRES_USER: rutasuser
+      POSTGRES_PASSWORD: rutaspass
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  backend:
+    build:
+      context: ./backend
+    container_name: rutas-backend
+    environment:
+      PORT: 3001
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_NAME: rutasdb
+      DB_USER: rutasuser
+      DB_PASSWORD: rutaspass
+    depends_on:
+      - db
+    ports:
+      - "3001:3001"
+
+  frontend:
+    build:
+      context: ./frontend
+    container_name: rutas-frontend
+    environment:
+      VITE_API_URL: http://localhost:3001
+    depends_on:
+      - backend
+    ports:
+      - "5173:5173"
+
+volumes:
+  postgres_data:
