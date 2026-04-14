@@ -112,6 +112,7 @@ function AdminPage() {
       <aside className="panel">
         <h2>Panel admin</h2>
         <p className="muted">Registra lineas de Potosi con su sentido real. Ejemplos: G-L con G de subida y L de bajada, o CH para ambos sentidos.</p>
+        <p className="muted">Si entras desde la VPS, abre siempre la ruta con hash: `/#/admin`.</p>
 
         <form className="admin-form" onSubmit={handleSave}>
           <label className="field">

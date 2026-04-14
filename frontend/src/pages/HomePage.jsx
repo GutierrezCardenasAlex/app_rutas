@@ -18,6 +18,12 @@ function HomePage() {
   }, []);
 
   useEffect(() => {
+    if (typeof window !== "undefined" && !window.isSecureContext) {
+      setStatus("Ubicacion en tiempo real deshabilitada");
+      setError("La geolocalizacion solo funciona en HTTPS o en localhost. En la VPS por HTTP podras seguir viendo y registrando rutas, pero no detectar tu ubicacion.");
+      return undefined;
+    }
+
     if (!navigator.geolocation) {
       setError("Tu navegador no soporta geolocalizacion.");
       setStatus("Geolocalizacion no disponible");
