@@ -11,6 +11,12 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rutasuser -d rutasdb"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
 
   backend:
     build:
@@ -24,7 +30,9 @@ services:
       DB_USER: rutasuser
       DB_PASSWORD: rutaspass
     depends_on:
-      - db
+      db:
+        condition: service_healthy
+    restart: unless-stopped
     ports:
       - "3001:3001"
 
@@ -36,6 +44,7 @@ services:
       VITE_API_URL: http://62.171.186.246:3001
     depends_on:
       - backend
+    restart: unless-stopped
     ports:
       - "5173:5173"
 

@@ -72,6 +72,26 @@ async function ensureSchema() {
   `);
 }
 
+async function waitForDatabase(maxAttempts = 15, delayMs = 4000) {
+  let lastError;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      await ensureSchema();
+      return;
+    } catch (error) {
+      lastError = error;
+      console.warn(`Intento ${attempt}/${maxAttempts}: la base de datos aun no esta lista.`);
+
+      if (attempt < maxAttempts) {
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+      }
+    }
+  }
+
+  throw lastError;
+}
+
 app.get("/health", async (_req, res) => {
   try {
     await pool.query("SELECT 1");
@@ -284,7 +304,7 @@ app.delete("/admin/routes/:id", async (req, res) => {
   }
 });
 
-ensureSchema()
+waitForDatabase()
   .then(() => {
     app.listen(port, () => {
       console.log(`Backend escuchando en puerto ${port}`);
