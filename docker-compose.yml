@@ -33,7 +33,7 @@ services:
       context: ./frontend
     container_name: rutas-frontend
     environment:
-      VITE_API_URL: http://localhost:3001
+      VITE_API_URL: http://62.171.186.246:3001
     depends_on:
       - backend
     ports:
