@@ -3,10 +3,13 @@ import { MapContainer, TileLayer } from "react-leaflet";
 import AdminDrawControl from "../components/AdminDrawControl.jsx";
 import { createRoute, fetchRoutes } from "../lib/api.js";
 
-const defaultCenter = [-16.5, -68.15];
+const defaultCenter = [-19.5836, -65.7531];
 
 function AdminPage() {
   const [form, setForm] = useState({
+    lineaDisplay: "",
+    lineaOperativa: "",
+    sentido: "subida",
     nombre: "",
     descripcion: "",
   });
@@ -43,7 +46,13 @@ function AdminPage() {
         geojson: draftGeoJson,
       });
 
-      setForm({ nombre: "", descripcion: "" });
+      setForm({
+        lineaDisplay: "",
+        lineaOperativa: "",
+        sentido: "subida",
+        nombre: "",
+        descripcion: "",
+      });
       setDraftGeoJson(null);
       setClearSignal((current) => current + 1);
       setMessage("Ruta guardada correctamente.");
@@ -59,9 +68,43 @@ function AdminPage() {
     <section className="layout admin-layout">
       <aside className="panel">
         <h2>Panel admin</h2>
-        <p className="muted">Dibuja una linea de ida o vuelta, conviertela a GeoJSON y guardala en PostGIS.</p>
+        <p className="muted">Registra lineas de Potosi con su sentido real. Ejemplos: G-L con G de subida y L de bajada, o CH para ambos sentidos.</p>
 
         <form className="admin-form" onSubmit={handleSave}>
+          <label className="field">
+            <span>Linea visible</span>
+            <input
+              type="text"
+              value={form.lineaDisplay}
+              onChange={(event) => setForm((current) => ({ ...current, lineaDisplay: event.target.value.toUpperCase() }))}
+              placeholder="Ej. G-L, CH, A, 010"
+              required
+            />
+          </label>
+
+          <label className="field">
+            <span>Linea operativa de esta ruta</span>
+            <input
+              type="text"
+              value={form.lineaOperativa}
+              onChange={(event) => setForm((current) => ({ ...current, lineaOperativa: event.target.value.toUpperCase() }))}
+              placeholder="Ej. G, L, CH, 010"
+              required
+            />
+          </label>
+
+          <label className="field">
+            <span>Sentido</span>
+            <select
+              value={form.sentido}
+              onChange={(event) => setForm((current) => ({ ...current, sentido: event.target.value }))}
+            >
+              <option value="subida">Subida</option>
+              <option value="bajada">Bajada</option>
+              <option value="ambos">Subida y bajada</option>
+            </select>
+          </label>
+
           <label className="field">
             <span>Nombre de la ruta</span>
             <input
@@ -91,6 +134,7 @@ function AdminPage() {
         <div className="card">
           <h3>Estado</h3>
           <p>{draftGeoJson ? "Hay una geometria lista para guardar." : "Aun no hay una linea dibujada."}</p>
+          <p className="muted">Cada trazo debe representar una sola operacion: una subida, una bajada o una linea bidireccional.</p>
           {message ? <p className="muted">{message}</p> : null}
         </div>
 
@@ -99,7 +143,8 @@ function AdminPage() {
           <ul className="route-list compact">
             {routes.map((route) => (
               <li key={route.id}>
-                <span>{route.nombre}</span>
+                <strong>{route.linea_display}</strong>
+                <span>{` ${route.linea_operativa} · ${route.sentido}`}</span>
               </li>
             ))}
           </ul>

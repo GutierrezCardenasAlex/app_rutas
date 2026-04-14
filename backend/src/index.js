@@ -8,6 +8,70 @@ const port = Number(process.env.PORT || 3001);
 app.use(cors());
 app.use(express.json({ limit: "2mb" }));
 
+async function ensureSchema() {
+  await pool.query(`
+    CREATE EXTENSION IF NOT EXISTS postgis;
+
+    CREATE TABLE IF NOT EXISTS rutas (
+      id SERIAL PRIMARY KEY,
+      linea_display TEXT,
+      linea_operativa TEXT,
+      sentido TEXT,
+      nombre TEXT NOT NULL,
+      descripcion TEXT DEFAULT '',
+      created_at TIMESTAMP DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS rutas_geometria (
+      id SERIAL PRIMARY KEY,
+      ruta_id INTEGER NOT NULL REFERENCES rutas(id) ON DELETE CASCADE,
+      geom GEOMETRY(LINESTRING, 4326) NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS rutas_geometria_geom_idx
+      ON rutas_geometria
+      USING GIST (geom);
+  `);
+
+  await pool.query(`
+    ALTER TABLE rutas
+    ADD COLUMN IF NOT EXISTS linea_display TEXT,
+    ADD COLUMN IF NOT EXISTS linea_operativa TEXT,
+    ADD COLUMN IF NOT EXISTS sentido TEXT;
+  `);
+
+  await pool.query(`
+    UPDATE rutas
+    SET
+      linea_display = COALESCE(NULLIF(linea_display, ''), nombre),
+      linea_operativa = COALESCE(NULLIF(linea_operativa, ''), nombre),
+      sentido = COALESCE(NULLIF(sentido, ''), 'ambos');
+  `);
+
+  await pool.query(`
+    ALTER TABLE rutas
+    ALTER COLUMN linea_display SET NOT NULL,
+    ALTER COLUMN linea_operativa SET NOT NULL,
+    ALTER COLUMN sentido SET NOT NULL;
+  `);
+
+  await pool.query(`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conname = 'rutas_sentido_check'
+      ) THEN
+        ALTER TABLE rutas
+        ADD CONSTRAINT rutas_sentido_check
+        CHECK (sentido IN ('subida', 'bajada', 'ambos'));
+      END IF;
+    END
+    $$;
+  `);
+}
+
 app.get("/health", async (_req, res) => {
   try {
     await pool.query("SELECT 1");
@@ -23,6 +87,9 @@ app.get("/routes", async (_req, res) => {
       `
         SELECT
           r.id,
+          r.linea_display,
+          r.linea_operativa,
+          r.sentido,
           r.nombre,
           r.descripcion,
           ST_AsGeoJSON(rg.geom)::json AS geometry
@@ -52,6 +119,9 @@ app.get("/routes/near", async (req, res) => {
       `
         SELECT
           r.id,
+          r.linea_display,
+          r.linea_operativa,
+          r.sentido,
           r.nombre,
           r.descripcion,
           ROUND(
@@ -80,14 +150,20 @@ app.get("/routes/near", async (req, res) => {
 });
 
 app.post("/admin/routes", async (req, res) => {
-  const { nombre, descripcion = "", geojson } = req.body;
+  const { lineaDisplay, lineaOperativa, sentido, nombre, descripcion = "", geojson } = req.body;
 
-  if (!nombre || !geojson) {
-    return res.status(400).json({ error: "Los campos nombre y geojson son obligatorios." });
+  if (!lineaDisplay || !lineaOperativa || !sentido || !nombre || !geojson) {
+    return res.status(400).json({
+      error: "Los campos lineaDisplay, lineaOperativa, sentido, nombre y geojson son obligatorios.",
+    });
   }
 
   if (geojson.type !== "LineString" || !Array.isArray(geojson.coordinates) || geojson.coordinates.length < 2) {
     return res.status(400).json({ error: "La geometria debe ser un GeoJSON LineString valido." });
+  }
+
+  if (!["subida", "bajada", "ambos"].includes(sentido)) {
+    return res.status(400).json({ error: "El sentido debe ser subida, bajada o ambos." });
   }
 
   const client = await pool.connect();
@@ -96,8 +172,12 @@ app.post("/admin/routes", async (req, res) => {
     await client.query("BEGIN");
 
     const routeResult = await client.query(
-      "INSERT INTO rutas (nombre, descripcion) VALUES ($1, $2) RETURNING id, nombre, descripcion",
-      [nombre, descripcion]
+      `
+        INSERT INTO rutas (linea_display, linea_operativa, sentido, nombre, descripcion)
+        VALUES ($1, $2, $3, $4, $5)
+        RETURNING id, linea_display, linea_operativa, sentido, nombre, descripcion
+      `,
+      [lineaDisplay, lineaOperativa, sentido, nombre, descripcion]
     );
 
     await client.query(
@@ -118,6 +198,13 @@ app.post("/admin/routes", async (req, res) => {
   }
 });
 
-app.listen(port, () => {
-  console.log(`Backend escuchando en puerto ${port}`);
-});
+ensureSchema()
+  .then(() => {
+    app.listen(port, () => {
+      console.log(`Backend escuchando en puerto ${port}`);
+    });
+  })
+  .catch((error) => {
+    console.error("No se pudo inicializar la base de datos:", error);
+    process.exit(1);
+  });

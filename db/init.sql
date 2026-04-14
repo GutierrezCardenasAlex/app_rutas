@@ -2,6 +2,9 @@ CREATE EXTENSION IF NOT EXISTS postgis;
 
 CREATE TABLE IF NOT EXISTS rutas (
   id SERIAL PRIMARY KEY,
+  linea_display TEXT NOT NULL,
+  linea_operativa TEXT NOT NULL,
+  sentido TEXT NOT NULL CHECK (sentido IN ('subida', 'bajada', 'ambos')),
   nombre TEXT NOT NULL,
   descripcion TEXT DEFAULT '',
   created_at TIMESTAMP DEFAULT NOW()

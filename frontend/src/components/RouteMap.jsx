@@ -34,7 +34,7 @@ function geometryToLatLngs(geometry) {
 
 function RouteMap({ center, routes, selectedRouteId, height = "70vh" }) {
   return (
-    <MapContainer center={center || [-16.5, -68.15]} zoom={13} scrollWheelZoom className="map" style={{ height }}>
+    <MapContainer center={center || [-19.5836, -65.7531]} zoom={13} scrollWheelZoom className="map" style={{ height }}>
       <TileLayer
         attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
         url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
@@ -57,7 +57,11 @@ function RouteMap({ center, routes, selectedRouteId, height = "70vh" }) {
           }}
         >
           <Popup>
-            <strong>{route.nombre}</strong>
+            <strong>{route.linea_display}</strong>
+            <br />
+            {`${route.linea_operativa} · ${route.sentido}`}
+            <br />
+            {route.nombre}
             <br />
             {route.descripcion || "Sin descripcion"}
           </Popup>

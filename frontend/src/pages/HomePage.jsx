@@ -65,6 +65,7 @@ function HomePage() {
       <aside className="panel">
         <h2>Planifica tu recorrido</h2>
         <p className="muted">{status}</p>
+        <p className="muted">Sistema pensado para lineas de Potosi como A, J, X, P, 010, 08, 012, G-L o CH.</p>
 
         <label className="field">
           <span>Destino</span>
@@ -89,8 +90,8 @@ function HomePage() {
                     className={route.id === selectedRouteId ? "route-button active" : "route-button"}
                     onClick={() => setSelectedRouteId(route.id)}
                   >
-                    <span>{route.nombre}</span>
-                    <small>{route.distance_meters} m</small>
+                    <span>{`${route.linea_display} · ${route.sentido}`}</span>
+                    <small>{`${route.distance_meters} m`}</small>
                   </button>
                 </li>
               ))}
@@ -102,6 +103,9 @@ function HomePage() {
           <h3>Resumen</h3>
           <p>{destination ? `Destino ingresado: ${destination}` : "Ingresa un destino para orientar la recomendacion visual."}</p>
           <p>{`Rutas disponibles en el mapa: ${routesToDisplay.length}`}</p>
+          {routesToDisplay[0] ? (
+            <p>{`Linea destacada: ${routesToDisplay[0].linea_display} (${routesToDisplay[0].linea_operativa} · ${routesToDisplay[0].sentido})`}</p>
+          ) : null}
         </div>
 
         {error ? <p className="error">{error}</p> : null}
