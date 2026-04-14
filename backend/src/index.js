@@ -198,6 +198,92 @@ app.post("/admin/routes", async (req, res) => {
   }
 });
 
+app.put("/admin/routes/:id", async (req, res) => {
+  const routeId = Number(req.params.id);
+  const { lineaDisplay, lineaOperativa, sentido, nombre, descripcion = "", geojson } = req.body;
+
+  if (!Number.isInteger(routeId)) {
+    return res.status(400).json({ error: "El id de la ruta es invalido." });
+  }
+
+  if (!lineaDisplay || !lineaOperativa || !sentido || !nombre || !geojson) {
+    return res.status(400).json({
+      error: "Los campos lineaDisplay, lineaOperativa, sentido, nombre y geojson son obligatorios.",
+    });
+  }
+
+  if (geojson.type !== "LineString" || !Array.isArray(geojson.coordinates) || geojson.coordinates.length < 2) {
+    return res.status(400).json({ error: "La geometria debe ser un GeoJSON LineString valido." });
+  }
+
+  if (!["subida", "bajada", "ambos"].includes(sentido)) {
+    return res.status(400).json({ error: "El sentido debe ser subida, bajada o ambos." });
+  }
+
+  const client = await pool.connect();
+
+  try {
+    await client.query("BEGIN");
+
+    const routeResult = await client.query(
+      `
+        UPDATE rutas
+        SET
+          linea_display = $1,
+          linea_operativa = $2,
+          sentido = $3,
+          nombre = $4,
+          descripcion = $5
+        WHERE id = $6
+        RETURNING id, linea_display, linea_operativa, sentido, nombre, descripcion
+      `,
+      [lineaDisplay, lineaOperativa, sentido, nombre, descripcion, routeId]
+    );
+
+    if (routeResult.rowCount === 0) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ error: "La ruta no existe." });
+    }
+
+    await client.query(
+      `
+        UPDATE rutas_geometria
+        SET geom = ST_SetSRID(ST_GeomFromGeoJSON($1), 4326)
+        WHERE ruta_id = $2
+      `,
+      [JSON.stringify(geojson), routeId]
+    );
+
+    await client.query("COMMIT");
+    res.json(routeResult.rows[0]);
+  } catch (error) {
+    await client.query("ROLLBACK");
+    res.status(500).json({ error: "No se pudo actualizar la ruta.", details: error.message });
+  } finally {
+    client.release();
+  }
+});
+
+app.delete("/admin/routes/:id", async (req, res) => {
+  const routeId = Number(req.params.id);
+
+  if (!Number.isInteger(routeId)) {
+    return res.status(400).json({ error: "El id de la ruta es invalido." });
+  }
+
+  try {
+    const result = await pool.query("DELETE FROM rutas WHERE id = $1 RETURNING id", [routeId]);
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: "La ruta no existe." });
+    }
+
+    res.json({ ok: true });
+  } catch (error) {
+    res.status(500).json({ error: "No se pudo eliminar la ruta.", details: error.message });
+  }
+});
+
 ensureSchema()
   .then(() => {
     app.listen(port, () => {

@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { MapContainer, TileLayer } from "react-leaflet";
 import AdminDrawControl from "../components/AdminDrawControl.jsx";
-import { createRoute, fetchRoutes } from "../lib/api.js";
+import { createRoute, deleteRoute, fetchRoutes, updateRoute } from "../lib/api.js";
 
 const defaultCenter = [-19.5836, -65.7531];
 
@@ -17,14 +17,33 @@ function AdminPage() {
   const [message, setMessage] = useState("");
   const [routes, setRoutes] = useState([]);
   const [clearSignal, setClearSignal] = useState(0);
+  const [editingRouteId, setEditingRouteId] = useState(null);
 
   useEffect(() => {
     fetchRoutes().then(setRoutes).catch((error) => setMessage(error.message));
   }, []);
 
-  const handleCreated = (geoJson) => {
+  const resetForm = () => {
+    setForm({
+      lineaDisplay: "",
+      lineaOperativa: "",
+      sentido: "subida",
+      nombre: "",
+      descripcion: "",
+    });
+    setDraftGeoJson(null);
+    setEditingRouteId(null);
+    setClearSignal((current) => current + 1);
+  };
+
+  const reloadRoutes = async () => {
+    const updatedRoutes = await fetchRoutes();
+    setRoutes(updatedRoutes);
+  };
+
+  const handleGeometryChange = (geoJson) => {
     setDraftGeoJson(geoJson);
-    setMessage("Linea capturada. Completa el formulario para guardar la ruta.");
+    setMessage(editingRouteId ? "Geometria actualizada. Guarda los cambios cuando estes listo." : "Linea capturada. Completa el formulario para guardar la ruta.");
   };
 
   const handleDeleted = () => {
@@ -41,24 +60,48 @@ function AdminPage() {
     }
 
     try {
-      await createRoute({
+      const payload = {
         ...form,
         geojson: draftGeoJson,
-      });
+      };
 
-      setForm({
-        lineaDisplay: "",
-        lineaOperativa: "",
-        sentido: "subida",
-        nombre: "",
-        descripcion: "",
-      });
-      setDraftGeoJson(null);
-      setClearSignal((current) => current + 1);
-      setMessage("Ruta guardada correctamente.");
+      if (editingRouteId) {
+        await updateRoute(editingRouteId, payload);
+      } else {
+        await createRoute(payload);
+      }
 
-      const updatedRoutes = await fetchRoutes();
-      setRoutes(updatedRoutes);
+      resetForm();
+      setMessage(editingRouteId ? "Ruta actualizada correctamente." : "Ruta guardada correctamente.");
+      await reloadRoutes();
+    } catch (error) {
+      setMessage(error.message);
+    }
+  };
+
+  const handleEditRoute = (route) => {
+    setEditingRouteId(route.id);
+    setForm({
+      lineaDisplay: route.linea_display,
+      lineaOperativa: route.linea_operativa,
+      sentido: route.sentido,
+      nombre: route.nombre,
+      descripcion: route.descripcion || "",
+    });
+    setDraftGeoJson(route.geometry);
+    setMessage(`Editando la ruta ${route.linea_display} (${route.linea_operativa}). Puedes mover sus puntos en el mapa.`);
+  };
+
+  const handleDeleteRoute = async (routeId) => {
+    try {
+      await deleteRoute(routeId);
+
+      if (editingRouteId === routeId) {
+        resetForm();
+      }
+
+      setMessage("Ruta eliminada correctamente.");
+      await reloadRoutes();
     } catch (error) {
       setMessage(error.message);
     }
@@ -127,14 +170,19 @@ function AdminPage() {
           </label>
 
           <button className="primary-button" type="submit">
-            Guardar ruta
+            {editingRouteId ? "Guardar cambios" : "Guardar ruta"}
           </button>
+          {editingRouteId ? (
+            <button className="secondary-button" type="button" onClick={resetForm}>
+              Cancelar edicion
+            </button>
+          ) : null}
         </form>
 
         <div className="card">
           <h3>Estado</h3>
           <p>{draftGeoJson ? "Hay una geometria lista para guardar." : "Aun no hay una linea dibujada."}</p>
-          <p className="muted">Cada trazo debe representar una sola operacion: una subida, una bajada o una linea bidireccional.</p>
+          <p className="muted">Cada trazo debe representar una sola operacion: una subida, una bajada o una linea bidireccional. Tambien puedes editar puntos de una ruta ya guardada.</p>
           {message ? <p className="muted">{message}</p> : null}
         </div>
 
@@ -143,8 +191,19 @@ function AdminPage() {
           <ul className="route-list compact">
             {routes.map((route) => (
               <li key={route.id}>
-                <strong>{route.linea_display}</strong>
-                <span>{` ${route.linea_operativa} · ${route.sentido}`}</span>
+                <div className="route-item-header">
+                  <strong>{route.linea_display}</strong>
+                  <span>{` ${route.linea_operativa} · ${route.sentido}`}</span>
+                </div>
+                <small>{route.nombre}</small>
+                <div className="route-actions">
+                  <button className="small-button" type="button" onClick={() => handleEditRoute(route)}>
+                    Editar
+                  </button>
+                  <button className="small-button danger" type="button" onClick={() => handleDeleteRoute(route.id)}>
+                    Eliminar
+                  </button>
+                </div>
               </li>
             ))}
           </ul>
@@ -157,7 +216,12 @@ function AdminPage() {
             attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
             url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
           />
-          <AdminDrawControl onCreated={handleCreated} onDeleted={handleDeleted} clearSignal={clearSignal} />
+          <AdminDrawControl
+            onGeometryChange={handleGeometryChange}
+            onDeleted={handleDeleted}
+            clearSignal={clearSignal}
+            initialGeometry={draftGeoJson}
+          />
         </MapContainer>
       </div>
     </section>
