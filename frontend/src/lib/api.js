@@ -4,10 +4,10 @@ function resolveApiUrl() {
   }
 
   if (typeof window !== "undefined") {
-    return `${window.location.protocol}//${window.location.hostname}:3001`;
+    return "/api";
   }
 
-  return "http://localhost:3001";
+  return "/api";
 }
 
 const API_URL = resolveApiUrl();
@@ -24,7 +24,7 @@ async function request(path, options = {}) {
       ...options,
     });
   } catch (error) {
-    throw new Error(`No se pudo conectar con el backend en ${API_URL}. Verifica que el servidor este corriendo en el puerto 3001.`);
+    throw new Error(`No se pudo conectar con el backend en ${API_URL}. Verifica que el proxy y el servidor esten corriendo.`);
   }
 
   if (!response.ok) {

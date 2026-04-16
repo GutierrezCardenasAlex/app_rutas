@@ -33,20 +33,35 @@ services:
       db:
         condition: service_healthy
     restart: unless-stopped
-    ports:
-      - "3001:3001"
 
   frontend:
     build:
       context: ./frontend
     container_name: rutas-frontend
-    environment:
-      VITE_API_URL: http://62.171.186.246:3001
     depends_on:
       - backend
     restart: unless-stopped
+    expose:
+      - "5173"
+
+  nginx:
+    build:
+      context: ./nginx
+    container_name: rutas-nginx
+    environment:
+      APP_DOMAIN: ${APP_DOMAIN}
+    depends_on:
+      - frontend
+      - backend
+    restart: unless-stopped
     ports:
-      - "5173:5173"
+      - "80:80"
+      - "443:443"
+    volumes:
+      - certbot_webroot:/var/www/certbot
+      - letsencrypt:/etc/letsencrypt
 
 volumes:
   postgres_data:
+  certbot_webroot:
+  letsencrypt:
