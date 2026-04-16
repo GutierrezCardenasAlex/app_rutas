@@ -17,7 +17,7 @@ Proyecto MVP con React, Express, PostgreSQL/PostGIS y Docker para registrar y vi
 ## Ejecutar
 
 ```bash
-docker-compose up --build
+docker compose up --build
 ```
 
 ## URLs
@@ -34,15 +34,24 @@ Ejemplo:
 
 ```bash
 export APP_DOMAIN=rutas.tudominio.com
+mkdir -p certbot/www certbot/conf
+docker compose down --remove-orphans
+docker volume rm app_rutas_certbot_webroot app_rutas_letsencrypt 2>/dev/null || true
 docker compose up --build -d
 ```
 
 Luego genera el certificado desde la VPS:
 
 ```bash
-docker exec -it rutas-nginx sh -c "mkdir -p /var/www/certbot/.well-known/acme-challenge"
-sudo certbot certonly --webroot -w /var/lib/docker/volumes/app_rutas_certbot_webroot/_data -d rutas.tudominio.com
+certbot certonly --webroot -w $(pwd)/certbot/www -d rutas.tudominio.com
 docker compose restart nginx
 ```
 
 Antes de eso debes hacer que el DNS del dominio apunte a la IP de tu VPS y abrir los puertos `80` y `443`.
+
+## Nota de migracion
+
+Si antes levantaste una version del proyecto que usaba los volumenes Docker `app_rutas_certbot_webroot` o `app_rutas_letsencrypt`, eliminarlos evita que Nginx siga leyendo una configuracion vieja. La version actual usa carpetas del proyecto:
+
+- `./certbot/www`
+- `./certbot/conf`
