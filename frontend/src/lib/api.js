@@ -11,16 +11,39 @@ function resolveApiUrl() {
 }
 
 const API_URL = resolveApiUrl();
+const ADMIN_PASSWORD_KEY = "rutas_admin_password";
+
+function getAdminPassword() {
+  if (typeof window === "undefined") {
+    return "";
+  }
+
+  return window.localStorage.getItem(ADMIN_PASSWORD_KEY) || "";
+}
+
+function buildHeaders(options = {}) {
+  const headers = {
+    "Content-Type": "application/json",
+    ...(options.headers || {}),
+  };
+
+  if (options.adminAuth) {
+    const password = getAdminPassword();
+
+    if (password) {
+      headers["x-admin-password"] = password;
+    }
+  }
+
+  return headers;
+}
 
 async function request(path, options = {}) {
   let response;
 
   try {
     response = await fetch(`${API_URL}${path}`, {
-      headers: {
-        "Content-Type": "application/json",
-        ...(options.headers || {}),
-      },
+      headers: buildHeaders(options),
       ...options,
     });
   } catch (error) {
@@ -35,6 +58,22 @@ async function request(path, options = {}) {
   return response.json();
 }
 
+export function setAdminPassword(password) {
+  if (typeof window !== "undefined") {
+    window.localStorage.setItem(ADMIN_PASSWORD_KEY, password);
+  }
+}
+
+export function clearAdminPassword() {
+  if (typeof window !== "undefined") {
+    window.localStorage.removeItem(ADMIN_PASSWORD_KEY);
+  }
+}
+
+export function hasAdminPassword() {
+  return Boolean(getAdminPassword());
+}
+
 export function fetchRoutes() {
   return request("/routes");
 }
@@ -46,6 +85,7 @@ export function fetchNearbyRoutes(lat, lng) {
 export function createRoute(payload) {
   return request("/admin/routes", {
     method: "POST",
+    adminAuth: true,
     body: JSON.stringify(payload),
   });
 }
@@ -53,6 +93,7 @@ export function createRoute(payload) {
 export function updateRoute(id, payload) {
   return request(`/admin/routes/${id}`, {
     method: "PUT",
+    adminAuth: true,
     body: JSON.stringify(payload),
   });
 }
@@ -60,5 +101,13 @@ export function updateRoute(id, payload) {
 export function deleteRoute(id) {
   return request(`/admin/routes/${id}`, {
     method: "DELETE",
+    adminAuth: true,
+  });
+}
+
+export function verifyAdminSession() {
+  return request("/admin/session", {
+    method: "GET",
+    adminAuth: true,
   });
 }

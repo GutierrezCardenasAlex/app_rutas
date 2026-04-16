@@ -84,6 +84,20 @@ select {
   box-shadow: 0 24px 60px rgba(15, 23, 42, 0.12);
 }
 
+.admin-login-shell {
+  min-height: calc(100vh - 120px);
+  display: grid;
+  place-items: center;
+}
+
+.admin-login-card {
+  width: min(460px, 100%);
+  padding: 1.5rem;
+  border-radius: 24px;
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: 0 24px 60px rgba(15, 23, 42, 0.12);
+}
+
 .panel {
   padding: 1.5rem;
   display: flex;
@@ -153,6 +167,11 @@ select {
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
+}
+
+.route-list.compact li.active-list-item {
+  outline: 2px solid #fdba74;
+  background: #fff7ed;
 }
 
 .route-button {

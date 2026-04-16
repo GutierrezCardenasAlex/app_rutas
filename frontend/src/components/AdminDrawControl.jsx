@@ -12,12 +12,17 @@ function createLayerFromGeometry(geometry) {
   return L.polyline(latLngs);
 }
 
-function AdminDrawControl({ onGeometryChange, onDeleted, clearSignal, initialGeometry }) {
+function AdminDrawControl({ onGeometryChange, onDeleted, clearSignal, initialGeometry, onReadyStateChange, onError }) {
   const map = useMap();
   const drawnItemsRef = useRef(null);
   const activeLayerRef = useRef(null);
 
   useEffect(() => {
+    try {
+      if (!L.Control?.Draw) {
+        throw new Error("Leaflet Draw no esta disponible.");
+      }
+
     const drawnItems = new L.FeatureGroup();
     drawnItemsRef.current = drawnItems;
     map.addLayer(drawnItems);
@@ -70,6 +75,7 @@ function AdminDrawControl({ onGeometryChange, onDeleted, clearSignal, initialGeo
     map.on(L.Draw.Event.CREATED, handleCreate);
     map.on(L.Draw.Event.EDITED, handleEdit);
     map.on(L.Draw.Event.DELETED, handleDelete);
+    onReadyStateChange?.(true);
 
     return () => {
       map.off(L.Draw.Event.CREATED, handleCreate);
@@ -77,8 +83,13 @@ function AdminDrawControl({ onGeometryChange, onDeleted, clearSignal, initialGeo
       map.off(L.Draw.Event.DELETED, handleDelete);
       map.removeControl(drawControl);
       map.removeLayer(drawnItems);
+      onReadyStateChange?.(false);
     };
-  }, [map, onGeometryChange, onDeleted]);
+    } catch (error) {
+      onReadyStateChange?.(false);
+      onError?.(error);
+    }
+  }, [map, onGeometryChange, onDeleted, onReadyStateChange, onError]);
 
   useEffect(() => {
     if (drawnItemsRef.current) {

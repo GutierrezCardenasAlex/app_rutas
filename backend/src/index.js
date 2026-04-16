@@ -4,9 +4,20 @@ import pool from "./db.js";
 
 const app = express();
 const port = Number(process.env.PORT || 3001);
+const adminPassword = process.env.ADMIN_PASSWORD || "admin123";
 
 app.use(cors());
 app.use(express.json({ limit: "2mb" }));
+
+function requireAdminAuth(req, res, next) {
+  const headerPassword = req.headers["x-admin-password"];
+
+  if (!headerPassword || headerPassword !== adminPassword) {
+    return res.status(401).json({ error: "Contrasena de administrador invalida." });
+  }
+
+  next();
+}
 
 async function ensureSchema() {
   await pool.query(`
@@ -169,7 +180,11 @@ app.get("/routes/near", async (req, res) => {
   }
 });
 
-app.post("/admin/routes", async (req, res) => {
+app.get("/admin/session", requireAdminAuth, (_req, res) => {
+  res.json({ ok: true });
+});
+
+app.post("/admin/routes", requireAdminAuth, async (req, res) => {
   const { lineaDisplay, lineaOperativa, sentido, nombre, descripcion = "", geojson } = req.body;
 
   if (!lineaDisplay || !lineaOperativa || !sentido || !nombre || !geojson) {
@@ -218,7 +233,7 @@ app.post("/admin/routes", async (req, res) => {
   }
 });
 
-app.put("/admin/routes/:id", async (req, res) => {
+app.put("/admin/routes/:id", requireAdminAuth, async (req, res) => {
   const routeId = Number(req.params.id);
   const { lineaDisplay, lineaOperativa, sentido, nombre, descripcion = "", geojson } = req.body;
 
@@ -284,7 +299,7 @@ app.put("/admin/routes/:id", async (req, res) => {
   }
 });
 
-app.delete("/admin/routes/:id", async (req, res) => {
+app.delete("/admin/routes/:id", requireAdminAuth, async (req, res) => {
   const routeId = Number(req.params.id);
 
   if (!Number.isInteger(routeId)) {
