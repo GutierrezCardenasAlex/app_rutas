@@ -39,7 +39,13 @@ function AdminDrawControl({ onGeometryChange, onDeleted, clearSignal, initialGeo
       },
       edit: {
         featureGroup: drawnItems,
-        edit: true,
+        edit: {
+          selectedPathOptions: {
+            maintainColor: false,
+            color: "#d9480f",
+            opacity: 0.9,
+          },
+        },
         remove: true,
       },
     });
