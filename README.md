@@ -28,11 +28,17 @@ Si necesitas otro puerto externo:
 DB_PUBLIC_PORT=55432 docker compose up --build
 ```
 
+Nginx publica por defecto `8080` para HTTP y `8443` para HTTPS, tambien para evitar choques con otros servicios. Si necesitas otros puertos:
+
+```bash
+HTTP_PUBLIC_PORT=8088 HTTPS_PUBLIC_PORT=8448 docker compose up --build
+```
+
 ## URLs
 
-- App local con proxy: `http://localhost`
-- Admin local: `http://localhost/#/admin`
-- Backend por proxy: `http://localhost/api/health`
+- App local con proxy: `http://localhost:8080`
+- Admin local: `http://localhost:8080/#/admin`
+- Backend por proxy: `http://localhost:8080/api/health`
 
 ## HTTPS en VPS
 
