@@ -47,7 +47,7 @@ Para geolocalizacion en produccion necesitas `HTTPS`. Let's Encrypt no emite cer
 Ejemplo:
 
 ```bash
-export APP_DOMAIN=rutas.tudominio.com
+export APP_DOMAIN=llegar_destino.cybernovatech.space
 mkdir -p certbot/www certbot/conf
 docker compose down --remove-orphans
 docker volume rm app_rutas_certbot_webroot app_rutas_letsencrypt 2>/dev/null || true
@@ -57,7 +57,7 @@ docker compose up --build -d
 Luego genera el certificado desde la VPS:
 
 ```bash
-certbot certonly --webroot -w $(pwd)/certbot/www -d rutas.tudominio.com
+certbot certonly --webroot -w $(pwd)/certbot/www -d llegar_destino.cybernovatech.space
 docker compose restart nginx
 ```
 

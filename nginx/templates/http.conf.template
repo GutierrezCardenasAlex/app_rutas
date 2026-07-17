@@ -14,7 +14,6 @@ server {
   location ^~ /.well-known/acme-challenge/ {
     alias /var/www/certbot/.well-known/acme-challenge/;
     default_type text/plain;
-    try_files $uri =404;
   }
 
   location /api/ {
