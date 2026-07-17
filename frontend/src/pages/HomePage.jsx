@@ -7,6 +7,7 @@ function HomePage() {
   const [allRoutes, setAllRoutes] = useState([]);
   const [nearbyRoutes, setNearbyRoutes] = useState([]);
   const [destination, setDestination] = useState("");
+  const [destinationPoint, setDestinationPoint] = useState(null);
   const [status, setStatus] = useState("Solicitando ubicacion...");
   const [error, setError] = useState("");
   const [selectedRouteId, setSelectedRouteId] = useState(null);
@@ -66,6 +67,19 @@ function HomePage() {
     return allRoutes;
   }, [allRoutes, nearbyRoutes]);
 
+  const handleDestinationSelect = (point) => {
+    setDestinationPoint(point);
+    setStatus("Destino marcado en el mapa");
+  };
+
+  const clearDestinationPoint = () => {
+    setDestinationPoint(null);
+  };
+
+  const destinationSummary = destinationPoint
+    ? `Destino marcado: ${destinationPoint[0].toFixed(5)}, ${destinationPoint[1].toFixed(5)}`
+    : "";
+
   return (
     <section className="layout">
       <aside className="panel">
@@ -77,11 +91,25 @@ function HomePage() {
           <span>Destino</span>
           <input
             type="text"
-            placeholder="Ej. Prado, terminal, mercado..."
+            placeholder="Ej. Plaza 10 de Noviembre, terminal, mercado..."
             value={destination}
             onChange={(event) => setDestination(event.target.value)}
           />
         </label>
+
+        <div className="card destination-card">
+          <h3>Destino en mapa</h3>
+          <p className="muted">
+            {destinationPoint
+              ? destinationSummary
+              : "Tambien puedes tocar el mapa para marcar tu destino sin escribirlo."}
+          </p>
+          {destinationPoint ? (
+            <button className="secondary-button" type="button" onClick={clearDestinationPoint}>
+              Quitar marcador
+            </button>
+          ) : null}
+        </div>
 
         <div className="card">
           <h3>Rutas cercanas</h3>
@@ -107,7 +135,13 @@ function HomePage() {
 
         <div className="card">
           <h3>Resumen</h3>
-          <p>{destination ? `Destino ingresado: ${destination}` : "Ingresa un destino para orientar la recomendacion visual."}</p>
+          <p>
+            {destination
+              ? `Destino ingresado: ${destination}`
+              : destinationPoint
+                ? destinationSummary
+                : "Ingresa un destino o marca un punto en el mapa."}
+          </p>
           <p>{`Rutas disponibles en el mapa: ${routesToDisplay.length}`}</p>
           {routesToDisplay[0] ? (
             <p>{`Linea destacada: ${routesToDisplay[0].linea_display} (${routesToDisplay[0].linea_operativa} · ${routesToDisplay[0].sentido})`}</p>
@@ -118,7 +152,13 @@ function HomePage() {
       </aside>
 
       <div className="map-panel">
-        <RouteMap center={position} routes={routesToDisplay} selectedRouteId={selectedRouteId} />
+        <RouteMap
+          center={position}
+          destinationPoint={destinationPoint}
+          onDestinationSelect={handleDestinationSelect}
+          routes={routesToDisplay}
+          selectedRouteId={selectedRouteId}
+        />
       </div>
     </section>
   );

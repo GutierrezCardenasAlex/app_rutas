@@ -197,6 +197,16 @@ select {
   color: #b91c1c;
 }
 
+.destination-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.destination-marker {
+  filter: hue-rotate(95deg) saturate(1.4);
+}
+
 .admin-form {
   display: flex;
   flex-direction: column;
