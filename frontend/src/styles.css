@@ -189,6 +189,21 @@ select {
   color: #1d4ed8;
 }
 
+.plan-detail {
+  margin-top: 0.5rem;
+  padding: 0.8rem;
+  border-radius: 12px;
+  background: #ffffff;
+}
+
+.plan-detail p {
+  margin: 0 0 0.5rem;
+}
+
+.plan-detail p:last-child {
+  margin-bottom: 0;
+}
+
 .muted {
   color: #475569;
 }

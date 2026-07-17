@@ -82,6 +82,12 @@ export function fetchNearbyRoutes(lat, lng) {
   return request(`/routes/near?lat=${lat}&lng=${lng}`);
 }
 
+export function fetchRoutePlan(originLat, originLng, destLat, destLng) {
+  return request(
+    `/routes/plan?originLat=${originLat}&originLng=${originLng}&destLat=${destLat}&destLng=${destLng}`
+  );
+}
+
 export function createRoute(payload) {
   return request("/admin/routes", {
     method: "POST",

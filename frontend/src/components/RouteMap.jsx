@@ -49,7 +49,9 @@ function DestinationSelector({ onDestinationSelect }) {
   return null;
 }
 
-function RouteMap({ center, destinationPoint, onDestinationSelect, routes, selectedRouteId, height = "70vh" }) {
+function RouteMap({ center, destinationPoint, onDestinationSelect, routes, selectedRouteId, selectedRouteIds = [], height = "70vh" }) {
+  const highlightedIds = new Set([selectedRouteId, ...selectedRouteIds].filter(Boolean));
+
   return (
     <MapContainer center={center || [-19.5836, -65.7531]} zoom={13} scrollWheelZoom className="map" style={{ height }}>
       <DestinationSelector onDestinationSelect={onDestinationSelect} />
@@ -85,8 +87,8 @@ function RouteMap({ center, destinationPoint, onDestinationSelect, routes, selec
           key={route.id}
           positions={geometryToLatLngs(route.geometry)}
           pathOptions={{
-            color: route.id === selectedRouteId ? "#d9480f" : "#1d4ed8",
-            weight: route.id === selectedRouteId ? 6 : 4,
+            color: highlightedIds.has(route.id) ? "#d9480f" : "#1d4ed8",
+            weight: highlightedIds.has(route.id) ? 6 : 4,
           }}
         >
           <Popup>

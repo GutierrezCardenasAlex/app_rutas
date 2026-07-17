@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import RouteMap from "../components/RouteMap.jsx";
-import { fetchNearbyRoutes, fetchRoutes } from "../lib/api.js";
+import { fetchNearbyRoutes, fetchRoutePlan, fetchRoutes } from "../lib/api.js";
 
 function HomePage() {
   const [position, setPosition] = useState(null);
@@ -11,6 +11,9 @@ function HomePage() {
   const [status, setStatus] = useState("Solicitando ubicacion...");
   const [error, setError] = useState("");
   const [selectedRouteId, setSelectedRouteId] = useState(null);
+  const [routePlan, setRoutePlan] = useState(null);
+  const [planStatus, setPlanStatus] = useState("");
+  const [selectedPlanIndex, setSelectedPlanIndex] = useState(0);
 
   useEffect(() => {
     fetchRoutes()
@@ -60,12 +63,109 @@ function HomePage() {
   }, []);
 
   const routesToDisplay = useMemo(() => {
-    if (nearbyRoutes.length > 0) {
-      return nearbyRoutes;
+    const baseRoutes = nearbyRoutes.length > 0 ? nearbyRoutes : allRoutes;
+    const routeMap = new Map(baseRoutes.map((route) => [route.id, route]));
+
+    routePlan?.direct?.forEach((route) => {
+      routeMap.set(route.id, route);
+    });
+
+    routePlan?.transfers?.forEach((plan) => {
+      routeMap.set(plan.first_route_id, {
+        id: plan.first_route_id,
+        linea_display: plan.first_linea_display,
+        linea_operativa: plan.first_linea_operativa,
+        sentido: plan.first_sentido,
+        nombre: plan.first_nombre,
+        descripcion: plan.first_descripcion,
+        geometry: plan.first_geometry,
+      });
+      routeMap.set(plan.second_route_id, {
+        id: plan.second_route_id,
+        linea_display: plan.second_linea_display,
+        linea_operativa: plan.second_linea_operativa,
+        sentido: plan.second_sentido,
+        nombre: plan.second_nombre,
+        descripcion: plan.second_descripcion,
+        geometry: plan.second_geometry,
+      });
+    });
+
+    return Array.from(routeMap.values());
+  }, [allRoutes, nearbyRoutes, routePlan]);
+
+  useEffect(() => {
+    if (!position || !destinationPoint) {
+      setRoutePlan(null);
+      setPlanStatus("");
+      return undefined;
     }
 
-    return allRoutes;
-  }, [allRoutes, nearbyRoutes]);
+    let ignore = false;
+    setPlanStatus("Calculando combinacion de lineas...");
+
+    fetchRoutePlan(position[0], position[1], destinationPoint[0], destinationPoint[1])
+      .then((plan) => {
+        if (ignore) {
+          return;
+        }
+
+        setRoutePlan(plan);
+        setSelectedPlanIndex(0);
+
+        if (plan.direct.length > 0) {
+          setSelectedRouteId(plan.direct[0].id);
+          setPlanStatus("Se encontro una linea directa.");
+          return;
+        }
+
+        if (plan.transfers.length > 0) {
+          setSelectedRouteId(plan.transfers[0].first_route_id);
+          setPlanStatus("Se encontro una combinacion con transbordo.");
+          return;
+        }
+
+        setPlanStatus("No encontramos una combinacion cercana con las rutas registradas.");
+      })
+      .catch((apiError) => {
+        if (!ignore) {
+          setPlanStatus(apiError.message);
+        }
+      });
+
+    return () => {
+      ignore = true;
+    };
+  }, [destinationPoint, position]);
+
+  const recommendations = useMemo(() => {
+    if (!routePlan) {
+      return [];
+    }
+
+    return [
+      ...routePlan.direct.map((route) => ({
+        type: "direct",
+        title: `Toma la linea ${route.linea_display}`,
+        routeIds: [route.id],
+        description: `Sube a ${route.linea_operativa} (${route.sentido}). Esta linea pasa cerca de tu ubicacion y tambien cerca del destino marcado.`,
+        details: `Estas a ${route.origin_distance_meters} m de la linea y te deja a ${route.destination_distance_meters} m del destino.`,
+      })),
+      ...routePlan.transfers.map((plan) => {
+        const [transferLng, transferLat] = plan.transfer_point.coordinates;
+
+        return {
+          type: "transfer",
+          title: `Toma ${plan.first_linea_display} y luego ${plan.second_linea_display}`,
+          routeIds: [plan.first_route_id, plan.second_route_id],
+          description: `Primero toma ${plan.first_linea_operativa} (${plan.first_sentido}). Baja cerca del punto de transbordo y cambia a ${plan.second_linea_operativa} (${plan.second_sentido}) para acercarte al destino.`,
+          details: `Transbordo aproximado: ${transferLat.toFixed(5)}, ${transferLng.toFixed(5)}. Las lineas se acercan a ${plan.transfer_distance_meters} m.`,
+        };
+      }),
+    ];
+  }, [routePlan]);
+
+  const selectedRecommendation = recommendations[selectedPlanIndex] || null;
 
   const handleDestinationSelect = (point) => {
     setDestinationPoint(point);
@@ -74,6 +174,8 @@ function HomePage() {
 
   const clearDestinationPoint = () => {
     setDestinationPoint(null);
+    setRoutePlan(null);
+    setPlanStatus("");
   };
 
   const destinationSummary = destinationPoint
@@ -108,6 +210,38 @@ function HomePage() {
             <button className="secondary-button" type="button" onClick={clearDestinationPoint}>
               Quitar marcador
             </button>
+          ) : null}
+        </div>
+
+        <div className="card">
+          <h3>Como llegar</h3>
+          {!position ? <p className="muted">Activa tu ubicacion para calcular desde donde estas.</p> : null}
+          {!destinationPoint ? <p className="muted">Marca tu destino en el mapa para calcular lineas y transbordos.</p> : null}
+          {planStatus ? <p className="muted">{planStatus}</p> : null}
+          {recommendations.length > 0 ? (
+            <ul className="route-list">
+              {recommendations.map((recommendation, index) => (
+                <li key={`${recommendation.type}-${index}`}>
+                  <button
+                    type="button"
+                    className={index === selectedPlanIndex ? "route-button active" : "route-button"}
+                    onClick={() => {
+                      setSelectedPlanIndex(index);
+                      setSelectedRouteId(recommendation.routeIds[0]);
+                    }}
+                  >
+                    <span>{recommendation.title}</span>
+                    <small>{recommendation.type === "direct" ? "Directo" : "Transbordo"}</small>
+                  </button>
+                  {index === selectedPlanIndex ? (
+                    <div className="plan-detail">
+                      <p>{recommendation.description}</p>
+                      <p className="muted">{recommendation.details}</p>
+                    </div>
+                  ) : null}
+                </li>
+              ))}
+            </ul>
           ) : null}
         </div>
 
@@ -158,6 +292,7 @@ function HomePage() {
           onDestinationSelect={handleDestinationSelect}
           routes={routesToDisplay}
           selectedRouteId={selectedRouteId}
+          selectedRouteIds={selectedRecommendation?.routeIds || []}
         />
       </div>
     </section>

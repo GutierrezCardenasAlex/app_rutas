@@ -180,6 +180,132 @@ app.get("/routes/near", async (req, res) => {
   }
 });
 
+app.get("/routes/plan", async (req, res) => {
+  const { originLat, originLng, destLat, destLng } = req.query;
+  const originLatitude = Number(originLat);
+  const originLongitude = Number(originLng);
+  const destinationLatitude = Number(destLat);
+  const destinationLongitude = Number(destLng);
+
+  if (
+    !Number.isFinite(originLatitude) ||
+    !Number.isFinite(originLongitude) ||
+    !Number.isFinite(destinationLatitude) ||
+    !Number.isFinite(destinationLongitude)
+  ) {
+    return res.status(400).json({
+      error: "Los parametros originLat, originLng, destLat y destLng son obligatorios.",
+    });
+  }
+
+  try {
+    const directResult = await pool.query(
+      `
+        WITH points AS (
+          SELECT
+            ST_SetSRID(ST_MakePoint($1, $2), 4326)::geography AS origin,
+            ST_SetSRID(ST_MakePoint($3, $4), 4326)::geography AS destination
+        )
+        SELECT
+          'direct' AS type,
+          r.id,
+          r.linea_display,
+          r.linea_operativa,
+          r.sentido,
+          r.nombre,
+          r.descripcion,
+          ROUND(ST_Distance(rg.geom::geography, points.origin)) AS origin_distance_meters,
+          ROUND(ST_Distance(rg.geom::geography, points.destination)) AS destination_distance_meters,
+          ST_AsGeoJSON(rg.geom)::json AS geometry
+        FROM rutas r
+        JOIN rutas_geometria rg ON rg.ruta_id = r.id
+        CROSS JOIN points
+        WHERE ST_DWithin(rg.geom::geography, points.origin, 500)
+          AND ST_DWithin(rg.geom::geography, points.destination, 500)
+        ORDER BY origin_distance_meters + destination_distance_meters ASC
+        LIMIT 3
+      `,
+      [originLongitude, originLatitude, destinationLongitude, destinationLatitude]
+    );
+
+    const transferResult = await pool.query(
+      `
+        WITH points AS (
+          SELECT
+            ST_SetSRID(ST_MakePoint($1, $2), 4326)::geography AS origin,
+            ST_SetSRID(ST_MakePoint($3, $4), 4326)::geography AS destination
+        ),
+        origin_routes AS (
+          SELECT
+            r.id,
+            r.linea_display,
+            r.linea_operativa,
+            r.sentido,
+            r.nombre,
+            r.descripcion,
+            rg.geom,
+            ROUND(ST_Distance(rg.geom::geography, points.origin)) AS origin_distance_meters
+          FROM rutas r
+          JOIN rutas_geometria rg ON rg.ruta_id = r.id
+          CROSS JOIN points
+          WHERE ST_DWithin(rg.geom::geography, points.origin, 500)
+        ),
+        destination_routes AS (
+          SELECT
+            r.id,
+            r.linea_display,
+            r.linea_operativa,
+            r.sentido,
+            r.nombre,
+            r.descripcion,
+            rg.geom,
+            ROUND(ST_Distance(rg.geom::geography, points.destination)) AS destination_distance_meters
+          FROM rutas r
+          JOIN rutas_geometria rg ON rg.ruta_id = r.id
+          CROSS JOIN points
+          WHERE ST_DWithin(rg.geom::geography, points.destination, 500)
+        )
+        SELECT
+          'transfer' AS type,
+          o.id AS first_route_id,
+          o.linea_display AS first_linea_display,
+          o.linea_operativa AS first_linea_operativa,
+          o.sentido AS first_sentido,
+          o.nombre AS first_nombre,
+          o.descripcion AS first_descripcion,
+          o.origin_distance_meters,
+          ST_AsGeoJSON(o.geom)::json AS first_geometry,
+          d.id AS second_route_id,
+          d.linea_display AS second_linea_display,
+          d.linea_operativa AS second_linea_operativa,
+          d.sentido AS second_sentido,
+          d.nombre AS second_nombre,
+          d.descripcion AS second_descripcion,
+          d.destination_distance_meters,
+          ST_AsGeoJSON(d.geom)::json AS second_geometry,
+          ROUND(ST_Distance(o.geom::geography, d.geom::geography)) AS transfer_distance_meters,
+          ST_AsGeoJSON(ST_ClosestPoint(o.geom, d.geom))::json AS transfer_point
+        FROM origin_routes o
+        JOIN destination_routes d ON d.id <> o.id
+        WHERE ST_DWithin(o.geom::geography, d.geom::geography, 350)
+        ORDER BY
+          o.origin_distance_meters + d.destination_distance_meters + ST_Distance(o.geom::geography, d.geom::geography) ASC
+        LIMIT 3
+      `,
+      [originLongitude, originLatitude, destinationLongitude, destinationLatitude]
+    );
+
+    res.json({
+      direct: directResult.rows,
+      transfers: transferResult.rows,
+      search_radius_meters: 500,
+      transfer_radius_meters: 350,
+    });
+  } catch (error) {
+    res.status(500).json({ error: "No se pudo calcular como llegar.", details: error.message });
+  }
+});
+
 app.get("/admin/session", requireAdminAuth, (_req, res) => {
   res.json({ ok: true });
 });
