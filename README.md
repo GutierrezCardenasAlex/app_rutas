@@ -20,6 +20,14 @@ Proyecto MVP con React, Express, PostgreSQL/PostGIS y Docker para registrar y vi
 docker compose up --build
 ```
 
+PostgreSQL se publica por defecto en el puerto `5433` del host para evitar choques con otros proyectos. Dentro de Docker el backend sigue usando `db:5432`.
+
+Si necesitas otro puerto externo:
+
+```bash
+DB_PUBLIC_PORT=55432 docker compose up --build
+```
+
 ## URLs
 
 - App local con proxy: `http://localhost`
