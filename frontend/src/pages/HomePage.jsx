@@ -2,6 +2,16 @@ import { useEffect, useMemo, useState } from "react";
 import RouteMap from "../components/RouteMap.jsx";
 import { fetchNearbyRoutes, fetchRoutePlan, fetchRoutes } from "../lib/api.js";
 
+function pickReference(references, fraction, fallback) {
+  if (!Array.isArray(references) || references.length === 0 || !Number.isFinite(Number(fraction))) {
+    return fallback;
+  }
+
+  const safeFraction = Math.min(1, Math.max(0, Number(fraction)));
+  const index = Math.round(safeFraction * (references.length - 1));
+  return references[index] || fallback;
+}
+
 function HomePage() {
   const [position, setPosition] = useState(null);
   const [allRoutes, setAllRoutes] = useState([]);
@@ -78,6 +88,7 @@ function HomePage() {
         sentido: plan.first_sentido,
         nombre: plan.first_nombre,
         descripcion: plan.first_descripcion,
+        referencias: plan.first_referencias,
         geometry: plan.first_geometry,
       });
       routeMap.set(plan.second_route_id, {
@@ -87,6 +98,7 @@ function HomePage() {
         sentido: plan.second_sentido,
         nombre: plan.second_nombre,
         descripcion: plan.second_descripcion,
+        referencias: plan.second_referencias,
         geometry: plan.second_geometry,
       });
     });
@@ -148,17 +160,20 @@ function HomePage() {
         type: "direct",
         title: `Toma la linea ${route.linea_display}`,
         routeIds: [route.id],
-        description: `Sube a ${route.linea_operativa} (${route.sentido}). Esta linea pasa cerca de tu ubicacion y tambien cerca del destino marcado.`,
+        description: `Sube a ${route.linea_operativa} (${route.sentido}) cerca de ${pickReference(route.referencias, route.origin_fraction, "tu ubicacion")}. Mantente en esa linea hasta ${pickReference(route.referencias, route.destination_fraction, "el destino marcado")}.`,
         details: `Estas a ${route.origin_distance_meters} m de la linea y te deja a ${route.destination_distance_meters} m del destino.`,
       })),
       ...routePlan.transfers.map((plan) => {
         const [transferLng, transferLat] = plan.transfer_point.coordinates;
+        const firstStop = pickReference(plan.first_referencias, plan.first_transfer_fraction, "el punto de transbordo");
+        const secondStop = pickReference(plan.second_referencias, plan.second_transfer_fraction, "el punto de transbordo");
+        const finalStop = pickReference(plan.second_referencias, plan.destination_fraction, "el destino marcado");
 
         return {
           type: "transfer",
           title: `Toma ${plan.first_linea_display} y luego ${plan.second_linea_display}`,
           routeIds: [plan.first_route_id, plan.second_route_id],
-          description: `Primero toma ${plan.first_linea_operativa} (${plan.first_sentido}). Baja cerca del punto de transbordo y cambia a ${plan.second_linea_operativa} (${plan.second_sentido}) para acercarte al destino.`,
+          description: `Primero toma ${plan.first_linea_operativa} (${plan.first_sentido}) y baja cerca de ${firstStop}. Luego busca ${plan.second_linea_operativa} (${plan.second_sentido}) cerca de ${secondStop} y sigue hasta ${finalStop}.`,
           details: `Transbordo aproximado: ${transferLat.toFixed(5)}, ${transferLng.toFixed(5)}. Las lineas se acercan a ${plan.transfer_distance_meters} m.`,
         };
       }),

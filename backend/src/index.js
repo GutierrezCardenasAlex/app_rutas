@@ -19,6 +19,21 @@ function requireAdminAuth(req, res, next) {
   next();
 }
 
+function normalizeReferences(value) {
+  if (Array.isArray(value)) {
+    return value.map((item) => String(item).trim()).filter(Boolean);
+  }
+
+  if (typeof value === "string") {
+    return value
+      .split(",")
+      .map((item) => item.trim())
+      .filter(Boolean);
+  }
+
+  return [];
+}
+
 async function ensureSchema() {
   await pool.query(`
     CREATE EXTENSION IF NOT EXISTS postgis;
@@ -30,6 +45,7 @@ async function ensureSchema() {
       sentido TEXT,
       nombre TEXT NOT NULL,
       descripcion TEXT DEFAULT '',
+      referencias TEXT[] DEFAULT '{}',
       created_at TIMESTAMP DEFAULT NOW()
     );
 
@@ -48,7 +64,8 @@ async function ensureSchema() {
     ALTER TABLE rutas
     ADD COLUMN IF NOT EXISTS linea_display TEXT,
     ADD COLUMN IF NOT EXISTS linea_operativa TEXT,
-    ADD COLUMN IF NOT EXISTS sentido TEXT;
+    ADD COLUMN IF NOT EXISTS sentido TEXT,
+    ADD COLUMN IF NOT EXISTS referencias TEXT[] DEFAULT '{}';
   `);
 
   await pool.query(`
@@ -123,6 +140,7 @@ app.get("/routes", async (_req, res) => {
           r.sentido,
           r.nombre,
           r.descripcion,
+          COALESCE(r.referencias, '{}') AS referencias,
           ST_AsGeoJSON(rg.geom)::json AS geometry
         FROM rutas r
         JOIN rutas_geometria rg ON rg.ruta_id = r.id
@@ -155,6 +173,7 @@ app.get("/routes/near", async (req, res) => {
           r.sentido,
           r.nombre,
           r.descripcion,
+          COALESCE(r.referencias, '{}') AS referencias,
           ROUND(
             ST_Distance(
               rg.geom::geography,
@@ -214,14 +233,17 @@ app.get("/routes/plan", async (req, res) => {
           r.sentido,
           r.nombre,
           r.descripcion,
+          COALESCE(r.referencias, '{}') AS referencias,
           ROUND(ST_Distance(rg.geom::geography, points.origin)) AS origin_distance_meters,
           ROUND(ST_Distance(rg.geom::geography, points.destination)) AS destination_distance_meters,
+          ST_LineLocatePoint(rg.geom, ST_SetSRID(ST_MakePoint($1, $2), 4326)) AS origin_fraction,
+          ST_LineLocatePoint(rg.geom, ST_SetSRID(ST_MakePoint($3, $4), 4326)) AS destination_fraction,
           ST_AsGeoJSON(rg.geom)::json AS geometry
         FROM rutas r
         JOIN rutas_geometria rg ON rg.ruta_id = r.id
         CROSS JOIN points
-        WHERE ST_DWithin(rg.geom::geography, points.origin, 500)
-          AND ST_DWithin(rg.geom::geography, points.destination, 500)
+        WHERE ST_DWithin(rg.geom::geography, points.origin, 700)
+          AND ST_DWithin(rg.geom::geography, points.destination, 700)
         ORDER BY origin_distance_meters + destination_distance_meters ASC
         LIMIT 3
       `,
@@ -243,12 +265,13 @@ app.get("/routes/plan", async (req, res) => {
             r.sentido,
             r.nombre,
             r.descripcion,
+            COALESCE(r.referencias, '{}') AS referencias,
             rg.geom,
             ROUND(ST_Distance(rg.geom::geography, points.origin)) AS origin_distance_meters
           FROM rutas r
           JOIN rutas_geometria rg ON rg.ruta_id = r.id
           CROSS JOIN points
-          WHERE ST_DWithin(rg.geom::geography, points.origin, 500)
+          WHERE ST_DWithin(rg.geom::geography, points.origin, 700)
         ),
         destination_routes AS (
           SELECT
@@ -258,12 +281,13 @@ app.get("/routes/plan", async (req, res) => {
             r.sentido,
             r.nombre,
             r.descripcion,
+            COALESCE(r.referencias, '{}') AS referencias,
             rg.geom,
             ROUND(ST_Distance(rg.geom::geography, points.destination)) AS destination_distance_meters
           FROM rutas r
           JOIN rutas_geometria rg ON rg.ruta_id = r.id
           CROSS JOIN points
-          WHERE ST_DWithin(rg.geom::geography, points.destination, 500)
+          WHERE ST_DWithin(rg.geom::geography, points.destination, 700)
         )
         SELECT
           'transfer' AS type,
@@ -273,6 +297,7 @@ app.get("/routes/plan", async (req, res) => {
           o.sentido AS first_sentido,
           o.nombre AS first_nombre,
           o.descripcion AS first_descripcion,
+          o.referencias AS first_referencias,
           o.origin_distance_meters,
           ST_AsGeoJSON(o.geom)::json AS first_geometry,
           d.id AS second_route_id,
@@ -281,13 +306,16 @@ app.get("/routes/plan", async (req, res) => {
           d.sentido AS second_sentido,
           d.nombre AS second_nombre,
           d.descripcion AS second_descripcion,
+          d.referencias AS second_referencias,
           d.destination_distance_meters,
           ST_AsGeoJSON(d.geom)::json AS second_geometry,
           ROUND(ST_Distance(o.geom::geography, d.geom::geography)) AS transfer_distance_meters,
-          ST_AsGeoJSON(ST_ClosestPoint(o.geom, d.geom))::json AS transfer_point
+          ST_AsGeoJSON(ST_ClosestPoint(o.geom, d.geom))::json AS transfer_point,
+          ST_LineLocatePoint(o.geom, ST_ClosestPoint(o.geom, d.geom)) AS first_transfer_fraction,
+          ST_LineLocatePoint(d.geom, ST_ClosestPoint(d.geom, o.geom)) AS second_transfer_fraction,
+          ST_LineLocatePoint(d.geom, ST_SetSRID(ST_MakePoint($3, $4), 4326)) AS destination_fraction
         FROM origin_routes o
         JOIN destination_routes d ON d.id <> o.id
-        WHERE ST_DWithin(o.geom::geography, d.geom::geography, 350)
         ORDER BY
           o.origin_distance_meters + d.destination_distance_meters + ST_Distance(o.geom::geography, d.geom::geography) ASC
         LIMIT 3
@@ -298,8 +326,7 @@ app.get("/routes/plan", async (req, res) => {
     res.json({
       direct: directResult.rows,
       transfers: transferResult.rows,
-      search_radius_meters: 500,
-      transfer_radius_meters: 350,
+      search_radius_meters: 700,
     });
   } catch (error) {
     res.status(500).json({ error: "No se pudo calcular como llegar.", details: error.message });
@@ -311,7 +338,8 @@ app.get("/admin/session", requireAdminAuth, (_req, res) => {
 });
 
 app.post("/admin/routes", requireAdminAuth, async (req, res) => {
-  const { lineaDisplay, lineaOperativa, sentido, nombre, descripcion = "", geojson } = req.body;
+  const { lineaDisplay, lineaOperativa, sentido, nombre, descripcion = "", referencias = [], geojson } = req.body;
+  const normalizedReferences = normalizeReferences(referencias);
 
   if (!lineaDisplay || !lineaOperativa || !sentido || !nombre || !geojson) {
     return res.status(400).json({
@@ -334,11 +362,11 @@ app.post("/admin/routes", requireAdminAuth, async (req, res) => {
 
     const routeResult = await client.query(
       `
-        INSERT INTO rutas (linea_display, linea_operativa, sentido, nombre, descripcion)
-        VALUES ($1, $2, $3, $4, $5)
-        RETURNING id, linea_display, linea_operativa, sentido, nombre, descripcion
+        INSERT INTO rutas (linea_display, linea_operativa, sentido, nombre, descripcion, referencias)
+        VALUES ($1, $2, $3, $4, $5, $6)
+        RETURNING id, linea_display, linea_operativa, sentido, nombre, descripcion, referencias
       `,
-      [lineaDisplay, lineaOperativa, sentido, nombre, descripcion]
+      [lineaDisplay, lineaOperativa, sentido, nombre, descripcion, normalizedReferences]
     );
 
     await client.query(
@@ -361,7 +389,8 @@ app.post("/admin/routes", requireAdminAuth, async (req, res) => {
 
 app.put("/admin/routes/:id", requireAdminAuth, async (req, res) => {
   const routeId = Number(req.params.id);
-  const { lineaDisplay, lineaOperativa, sentido, nombre, descripcion = "", geojson } = req.body;
+  const { lineaDisplay, lineaOperativa, sentido, nombre, descripcion = "", referencias = [], geojson } = req.body;
+  const normalizedReferences = normalizeReferences(referencias);
 
   if (!Number.isInteger(routeId)) {
     return res.status(400).json({ error: "El id de la ruta es invalido." });
@@ -394,11 +423,12 @@ app.put("/admin/routes/:id", requireAdminAuth, async (req, res) => {
           linea_operativa = $2,
           sentido = $3,
           nombre = $4,
-          descripcion = $5
-        WHERE id = $6
-        RETURNING id, linea_display, linea_operativa, sentido, nombre, descripcion
+          descripcion = $5,
+          referencias = $6
+        WHERE id = $7
+        RETURNING id, linea_display, linea_operativa, sentido, nombre, descripcion, referencias
       `,
-      [lineaDisplay, lineaOperativa, sentido, nombre, descripcion, routeId]
+      [lineaDisplay, lineaOperativa, sentido, nombre, descripcion, normalizedReferences, routeId]
     );
 
     if (routeResult.rowCount === 0) {

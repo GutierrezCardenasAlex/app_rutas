@@ -7,6 +7,7 @@ CREATE TABLE IF NOT EXISTS rutas (
   sentido TEXT NOT NULL CHECK (sentido IN ('subida', 'bajada', 'ambos')),
   nombre TEXT NOT NULL,
   descripcion TEXT DEFAULT '',
+  referencias TEXT[] DEFAULT '{}',
   created_at TIMESTAMP DEFAULT NOW()
 );
 

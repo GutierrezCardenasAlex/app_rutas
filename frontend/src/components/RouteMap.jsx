@@ -99,6 +99,12 @@ function RouteMap({ center, destinationPoint, onDestinationSelect, routes, selec
             {route.nombre}
             <br />
             {route.descripcion || "Sin descripcion"}
+            {route.referencias?.length ? (
+              <>
+                <br />
+                {route.referencias.join(" · ")}
+              </>
+            ) : null}
           </Popup>
         </Polyline>
       ))}

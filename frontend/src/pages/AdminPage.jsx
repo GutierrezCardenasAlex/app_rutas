@@ -19,6 +19,7 @@ const emptyForm = {
   sentido: "subida",
   nombre: "",
   descripcion: "",
+  referencias: "",
 };
 
 function geometryToLatLngs(geometry) {
@@ -158,6 +159,7 @@ function AdminPage() {
       sentido: route.sentido,
       nombre: route.nombre,
       descripcion: route.descripcion || "",
+      referencias: Array.isArray(route.referencias) ? route.referencias.join(", ") : "",
     });
     setDraftGeoJson(route.geometry);
     setSelectedRouteId(route.id);
@@ -281,6 +283,16 @@ function AdminPage() {
             />
           </label>
 
+          <label className="field">
+            <span>Puntos de referencia</span>
+            <textarea
+              rows="3"
+              value={form.referencias}
+              onChange={(event) => setForm((current) => ({ ...current, referencias: event.target.value }))}
+              placeholder="Ej. calle Villa, rotonda, Cabezon, exterminal, mercado Chuquimia, pasarela, extransito"
+            />
+          </label>
+
           <button className="primary-button" type="submit">
             {editingRouteId ? "Guardar cambios" : "Guardar ruta"}
           </button>
@@ -320,6 +332,7 @@ function AdminPage() {
                   <span>{` ${route.linea_operativa} · ${route.sentido}`}</span>
                 </div>
                 <small>{route.nombre}</small>
+                {route.referencias?.length ? <small>{route.referencias.join(" · ")}</small> : null}
                 <div className="route-actions">
                   <button className="small-button" type="button" onClick={() => setSelectedRouteId(route.id)}>
                     Ver
