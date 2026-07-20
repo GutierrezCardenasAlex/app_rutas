@@ -5,6 +5,9 @@ import pool from "./db.js";
 const app = express();
 const port = Number(process.env.PORT || 3001);
 const adminPassword = process.env.ADMIN_PASSWORD || "admin123";
+const DIRECT_DESTINATION_RADIUS_METERS = 300;
+const ROUTE_ACCESS_RADIUS_METERS = 900;
+const TRANSFER_WARNING_RADIUS_METERS = 650;
 
 app.use(cors());
 app.use(express.json({ limit: "2mb" }));
@@ -222,8 +225,8 @@ app.get("/routes/plan", async (req, res) => {
       `
         WITH points AS (
           SELECT
-            ST_SetSRID(ST_MakePoint($1, $2), 4326)::geography AS origin,
-            ST_SetSRID(ST_MakePoint($3, $4), 4326)::geography AS destination
+          ST_SetSRID(ST_MakePoint($1, $2), 4326)::geography AS origin,
+          ST_SetSRID(ST_MakePoint($3, $4), 4326)::geography AS destination
         )
         SELECT
           'direct' AS type,
@@ -242,12 +245,19 @@ app.get("/routes/plan", async (req, res) => {
         FROM rutas r
         JOIN rutas_geometria rg ON rg.ruta_id = r.id
         CROSS JOIN points
-        WHERE ST_DWithin(rg.geom::geography, points.origin, 700)
-          AND ST_DWithin(rg.geom::geography, points.destination, 700)
+        WHERE ST_DWithin(rg.geom::geography, points.origin, $5)
+          AND ST_DWithin(rg.geom::geography, points.destination, $6)
         ORDER BY origin_distance_meters + destination_distance_meters ASC
         LIMIT 3
       `,
-      [originLongitude, originLatitude, destinationLongitude, destinationLatitude]
+      [
+        originLongitude,
+        originLatitude,
+        destinationLongitude,
+        destinationLatitude,
+        ROUTE_ACCESS_RADIUS_METERS,
+        DIRECT_DESTINATION_RADIUS_METERS,
+      ]
     );
 
     const transferResult = await pool.query(
@@ -271,7 +281,7 @@ app.get("/routes/plan", async (req, res) => {
           FROM rutas r
           JOIN rutas_geometria rg ON rg.ruta_id = r.id
           CROSS JOIN points
-          WHERE ST_DWithin(rg.geom::geography, points.origin, 700)
+          WHERE ST_DWithin(rg.geom::geography, points.origin, $5)
         ),
         destination_routes AS (
           SELECT
@@ -287,7 +297,7 @@ app.get("/routes/plan", async (req, res) => {
           FROM rutas r
           JOIN rutas_geometria rg ON rg.ruta_id = r.id
           CROSS JOIN points
-          WHERE ST_DWithin(rg.geom::geography, points.destination, 700)
+          WHERE ST_DWithin(rg.geom::geography, points.destination, $5)
         )
         SELECT
           'transfer' AS type,
@@ -313,20 +323,38 @@ app.get("/routes/plan", async (req, res) => {
           ST_AsGeoJSON(ST_ClosestPoint(o.geom, d.geom))::json AS transfer_point,
           ST_LineLocatePoint(o.geom, ST_ClosestPoint(o.geom, d.geom)) AS first_transfer_fraction,
           ST_LineLocatePoint(d.geom, ST_ClosestPoint(d.geom, o.geom)) AS second_transfer_fraction,
-          ST_LineLocatePoint(d.geom, ST_SetSRID(ST_MakePoint($3, $4), 4326)) AS destination_fraction
+          ST_LineLocatePoint(d.geom, ST_SetSRID(ST_MakePoint($3, $4), 4326)) AS destination_fraction,
+          CASE
+            WHEN ST_Distance(o.geom::geography, d.geom::geography) <= $6 THEN true
+            ELSE false
+          END AS transfer_is_close
         FROM origin_routes o
         JOIN destination_routes d ON d.id <> o.id
+          AND d.linea_operativa <> o.linea_operativa
         ORDER BY
           o.origin_distance_meters + d.destination_distance_meters + ST_Distance(o.geom::geography, d.geom::geography) ASC
-        LIMIT 3
+        LIMIT 5
       `,
-      [originLongitude, originLatitude, destinationLongitude, destinationLatitude]
+      [
+        originLongitude,
+        originLatitude,
+        destinationLongitude,
+        destinationLatitude,
+        ROUTE_ACCESS_RADIUS_METERS,
+        TRANSFER_WARNING_RADIUS_METERS,
+      ]
     );
 
     res.json({
       direct: directResult.rows,
       transfers: transferResult.rows,
-      search_radius_meters: 700,
+      direct_destination_radius_meters: DIRECT_DESTINATION_RADIUS_METERS,
+      route_access_radius_meters: ROUTE_ACCESS_RADIUS_METERS,
+      transfer_warning_radius_meters: TRANSFER_WARNING_RADIUS_METERS,
+      counts: {
+        direct: directResult.rowCount,
+        transfers: transferResult.rowCount,
+      },
     });
   } catch (error) {
     res.status(500).json({ error: "No se pudo calcular como llegar.", details: error.message });

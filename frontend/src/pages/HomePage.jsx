@@ -127,7 +127,11 @@ function HomePage() {
 
         if (plan.direct.length > 0) {
           setSelectedRouteId(plan.direct[0].id);
-          setPlanStatus("Se encontro una linea directa.");
+          setPlanStatus(
+            plan.transfers.length > 0
+              ? "Se encontraron opciones directas y tambien combinaciones con transbordo."
+              : "Se encontro una linea directa."
+          );
           return;
         }
 
@@ -160,6 +164,7 @@ function HomePage() {
         type: "direct",
         title: `Toma la linea ${route.linea_display}`,
         routeIds: [route.id],
+        vehicleCount: 1,
         description: `Sube a ${route.linea_operativa} (${route.sentido}) cerca de ${pickReference(route.referencias, route.origin_fraction, "tu ubicacion")}. Mantente en esa linea hasta ${pickReference(route.referencias, route.destination_fraction, "el destino marcado")}.`,
         details: `Estas a ${route.origin_distance_meters} m de la linea y te deja a ${route.destination_distance_meters} m del destino.`,
       })),
@@ -173,8 +178,9 @@ function HomePage() {
           type: "transfer",
           title: `Toma ${plan.first_linea_display} y luego ${plan.second_linea_display}`,
           routeIds: [plan.first_route_id, plan.second_route_id],
+          vehicleCount: 2,
           description: `Primero toma ${plan.first_linea_operativa} (${plan.first_sentido}) y baja cerca de ${firstStop}. Luego busca ${plan.second_linea_operativa} (${plan.second_sentido}) cerca de ${secondStop} y sigue hasta ${finalStop}.`,
-          details: `Transbordo aproximado: ${transferLat.toFixed(5)}, ${transferLng.toFixed(5)}. Las lineas se acercan a ${plan.transfer_distance_meters} m.`,
+          details: `${plan.transfer_is_close ? "Transbordo cercano" : "Transbordo con caminata"}: ${transferLat.toFixed(5)}, ${transferLng.toFixed(5)}. Las lineas se acercan a ${plan.transfer_distance_meters} m.`,
         };
       }),
     ];
@@ -233,6 +239,13 @@ function HomePage() {
           {!position ? <p className="muted">Activa tu ubicacion para calcular desde donde estas.</p> : null}
           {!destinationPoint ? <p className="muted">Marca tu destino en el mapa para calcular lineas y transbordos.</p> : null}
           {planStatus ? <p className="muted">{planStatus}</p> : null}
+          {selectedRecommendation ? (
+            <p className="trip-count">
+              {selectedRecommendation.vehicleCount === 1
+                ? "Necesitas tomar 1 micro."
+                : "Necesitas tomar 2 micros."}
+            </p>
+          ) : null}
           {recommendations.length > 0 ? (
             <ul className="route-list">
               {recommendations.map((recommendation, index) => (
@@ -246,7 +259,7 @@ function HomePage() {
                     }}
                   >
                     <span>{recommendation.title}</span>
-                    <small>{recommendation.type === "direct" ? "Directo" : "Transbordo"}</small>
+                    <small>{recommendation.vehicleCount === 1 ? "1 micro" : "2 micros"}</small>
                   </button>
                   {index === selectedPlanIndex ? (
                     <div className="plan-detail">
