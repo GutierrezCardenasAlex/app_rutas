@@ -8,6 +8,7 @@ const adminPassword = process.env.ADMIN_PASSWORD || "admin123";
 const DIRECT_DESTINATION_RADIUS_METERS = 300;
 const WALK_ONLY_RADIUS_METERS = 700;
 const FINAL_WALK_RADIUS_METERS = 900;
+const SINGLE_ROUTE_PREFERRED_FINAL_WALK_METERS = 900;
 const ROUTE_ACCESS_RADIUS_METERS = 900;
 const TRANSFER_WARNING_RADIUS_METERS = 650;
 const TRANSFER_SEARCH_RADIUS_METERS = 1200;
@@ -574,103 +575,112 @@ app.get("/routes/plan", async (req, res) => {
       });
     }
 
-    for (const firstRoute of originRoutes) {
-      for (const secondRoute of destinationCandidates) {
-        if (firstRoute.id === secondRoute.id || firstRoute.linea_operativa === secondRoute.linea_operativa) {
-          continue;
-        }
+    const hasPreferredSimpleOption = [...itineraryByKey.values()].some(
+      (itinerary) =>
+        itinerary.vehicle_count === 0 ||
+        (itinerary.vehicle_count === 1 &&
+          itinerary.destination_distance_meters <= SINGLE_ROUTE_PREFERRED_FINAL_WALK_METERS)
+    );
 
-        const transfer = getTransfer(firstRoute, secondRoute);
-
-        if (!Number.isFinite(transfer.distance_meters) || transfer.distance_meters > TRANSFER_SEARCH_RADIUS_METERS) {
-          continue;
-        }
-
-        addItinerary({
-          type: "multi",
-          vehicle_count: 2,
-          route_ids: [firstRoute.id, secondRoute.id],
-          title: `Toma ${firstRoute.linea_display} y luego ${secondRoute.linea_display}`,
-          legs: [
-            buildRouteLeg(firstRoute, firstRoute.origin_fraction, transfer.from_fraction),
-            routeToDestinationLeg(secondRoute, transfer.to_fraction),
-          ],
-          transfers: [transfer],
-          walk_segments: buildWalkSegments({
-            originWalk: firstRoute.origin_distance_meters,
-            transferWalks: [transfer.distance_meters],
-            finalWalk: secondRoute.destination_distance_meters,
-          }),
-          destination_distance_meters: secondRoute.destination_distance_meters,
-          score_meters:
-            firstRoute.origin_distance_meters +
-            transfer.distance_meters +
-            secondRoute.destination_distance_meters +
-            vehiclePenaltyMeters * 2,
-        });
-      }
-    }
-
-    for (const firstRoute of originRoutes) {
-      for (const middleRoute of measuredRoutes) {
-        if (firstRoute.id === middleRoute.id || firstRoute.linea_operativa === middleRoute.linea_operativa) {
-          continue;
-        }
-
-        const firstTransfer = getTransfer(firstRoute, middleRoute);
-
-        if (
-          !Number.isFinite(firstTransfer.distance_meters) ||
-          firstTransfer.distance_meters > TRANSFER_SEARCH_RADIUS_METERS
-        ) {
-          continue;
-        }
-
-        for (const finalRoute of destinationCandidates) {
-          const routeIds = new Set([firstRoute.id, middleRoute.id, finalRoute.id]);
-          const lineNames = new Set([
-            firstRoute.linea_operativa,
-            middleRoute.linea_operativa,
-            finalRoute.linea_operativa,
-          ]);
-
-          if (routeIds.size < MAX_ITINERARY_VEHICLES || lineNames.size < MAX_ITINERARY_VEHICLES) {
+    if (!hasPreferredSimpleOption) {
+      for (const firstRoute of originRoutes) {
+        for (const secondRoute of destinationCandidates) {
+          if (firstRoute.id === secondRoute.id || firstRoute.linea_operativa === secondRoute.linea_operativa) {
             continue;
           }
 
-          const secondTransfer = getTransfer(middleRoute, finalRoute);
+          const transfer = getTransfer(firstRoute, secondRoute);
 
-          if (
-            !Number.isFinite(secondTransfer.distance_meters) ||
-            secondTransfer.distance_meters > TRANSFER_SEARCH_RADIUS_METERS
-          ) {
+          if (!Number.isFinite(transfer.distance_meters) || transfer.distance_meters > TRANSFER_SEARCH_RADIUS_METERS) {
             continue;
           }
 
           addItinerary({
             type: "multi",
-            vehicle_count: 3,
-            route_ids: [firstRoute.id, middleRoute.id, finalRoute.id],
-            title: `Toma ${firstRoute.linea_display}, luego ${middleRoute.linea_display} y luego ${finalRoute.linea_display}`,
+            vehicle_count: 2,
+            route_ids: [firstRoute.id, secondRoute.id],
+            title: `Toma ${firstRoute.linea_display} y luego ${secondRoute.linea_display}`,
             legs: [
-              buildRouteLeg(firstRoute, firstRoute.origin_fraction, firstTransfer.from_fraction),
-              buildRouteLeg(middleRoute, firstTransfer.to_fraction, secondTransfer.from_fraction),
-              routeToDestinationLeg(finalRoute, secondTransfer.to_fraction),
+              buildRouteLeg(firstRoute, firstRoute.origin_fraction, transfer.from_fraction),
+              routeToDestinationLeg(secondRoute, transfer.to_fraction),
             ],
-            transfers: [firstTransfer, secondTransfer],
+            transfers: [transfer],
             walk_segments: buildWalkSegments({
               originWalk: firstRoute.origin_distance_meters,
-              transferWalks: [firstTransfer.distance_meters, secondTransfer.distance_meters],
-              finalWalk: finalRoute.destination_distance_meters,
+              transferWalks: [transfer.distance_meters],
+              finalWalk: secondRoute.destination_distance_meters,
             }),
-            destination_distance_meters: finalRoute.destination_distance_meters,
+            destination_distance_meters: secondRoute.destination_distance_meters,
             score_meters:
               firstRoute.origin_distance_meters +
-              firstTransfer.distance_meters +
-              secondTransfer.distance_meters +
-              finalRoute.destination_distance_meters +
-              vehiclePenaltyMeters * 3,
+              transfer.distance_meters +
+              secondRoute.destination_distance_meters +
+              vehiclePenaltyMeters * 2,
           });
+        }
+      }
+
+      for (const firstRoute of originRoutes) {
+        for (const middleRoute of measuredRoutes) {
+          if (firstRoute.id === middleRoute.id || firstRoute.linea_operativa === middleRoute.linea_operativa) {
+            continue;
+          }
+
+          const firstTransfer = getTransfer(firstRoute, middleRoute);
+
+          if (
+            !Number.isFinite(firstTransfer.distance_meters) ||
+            firstTransfer.distance_meters > TRANSFER_SEARCH_RADIUS_METERS
+          ) {
+            continue;
+          }
+
+          for (const finalRoute of destinationCandidates) {
+            const routeIds = new Set([firstRoute.id, middleRoute.id, finalRoute.id]);
+            const lineNames = new Set([
+              firstRoute.linea_operativa,
+              middleRoute.linea_operativa,
+              finalRoute.linea_operativa,
+            ]);
+
+            if (routeIds.size < MAX_ITINERARY_VEHICLES || lineNames.size < MAX_ITINERARY_VEHICLES) {
+              continue;
+            }
+
+            const secondTransfer = getTransfer(middleRoute, finalRoute);
+
+            if (
+              !Number.isFinite(secondTransfer.distance_meters) ||
+              secondTransfer.distance_meters > TRANSFER_SEARCH_RADIUS_METERS
+            ) {
+              continue;
+            }
+
+            addItinerary({
+              type: "multi",
+              vehicle_count: 3,
+              route_ids: [firstRoute.id, middleRoute.id, finalRoute.id],
+              title: `Toma ${firstRoute.linea_display}, luego ${middleRoute.linea_display} y luego ${finalRoute.linea_display}`,
+              legs: [
+                buildRouteLeg(firstRoute, firstRoute.origin_fraction, firstTransfer.from_fraction),
+                buildRouteLeg(middleRoute, firstTransfer.to_fraction, secondTransfer.from_fraction),
+                routeToDestinationLeg(finalRoute, secondTransfer.to_fraction),
+              ],
+              transfers: [firstTransfer, secondTransfer],
+              walk_segments: buildWalkSegments({
+                originWalk: firstRoute.origin_distance_meters,
+                transferWalks: [firstTransfer.distance_meters, secondTransfer.distance_meters],
+                finalWalk: finalRoute.destination_distance_meters,
+              }),
+              destination_distance_meters: finalRoute.destination_distance_meters,
+              score_meters:
+                firstRoute.origin_distance_meters +
+                firstTransfer.distance_meters +
+                secondTransfer.distance_meters +
+                finalRoute.destination_distance_meters +
+                vehiclePenaltyMeters * 3,
+            });
+          }
         }
       }
     }
@@ -688,6 +698,7 @@ app.get("/routes/plan", async (req, res) => {
       direct_destination_radius_meters: DIRECT_DESTINATION_RADIUS_METERS,
       walk_only_radius_meters: WALK_ONLY_RADIUS_METERS,
       final_walk_radius_meters: FINAL_WALK_RADIUS_METERS,
+      single_route_preferred_final_walk_meters: SINGLE_ROUTE_PREFERRED_FINAL_WALK_METERS,
       route_access_radius_meters: ROUTE_ACCESS_RADIUS_METERS,
       transfer_warning_radius_meters: TRANSFER_WARNING_RADIUS_METERS,
       transfer_search_radius_meters: TRANSFER_SEARCH_RADIUS_METERS,
