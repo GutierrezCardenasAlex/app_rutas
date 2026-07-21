@@ -283,7 +283,7 @@ function HomePage() {
           };
         }
 
-        const steps = itinerary.legs.map((leg, index) => {
+        const legStops = itinerary.legs.map((leg, index) => {
           const boardFallback = index === 0 ? "tu ubicacion" : "el punto de cambio";
           const alightFallback = index === itinerary.legs.length - 1 ? "el destino marcado" : "el siguiente cambio";
           const legReferences =
@@ -293,12 +293,32 @@ function HomePage() {
           const boardAt = pickReference(legReferences, leg.board_fraction, boardFallback);
           const alightAt = pickReference(legReferences, leg.alight_fraction, alightFallback);
 
-          return `${index + 1}. Toma ${leg.linea_operativa} (${leg.sentido}) cerca de ${boardAt} y baja cerca de ${alightAt}.`;
+          return {
+            ...leg,
+            boardAt,
+            alightAt,
+          };
+        });
+        const steps = legStops.map((leg, index) => {
+          if (itinerary.vehicle_count > 1 && index === 0) {
+            return `1. Primero toma la linea ${leg.linea_operativa} (${leg.sentido}) cerca de ${leg.boardAt} y baja cerca de ${leg.alightAt}.`;
+          }
+
+          if (itinerary.vehicle_count > 1) {
+            return `${index + 1}. Luego toma la linea ${leg.linea_operativa} (${leg.sentido}) cerca del transbordo y baja cerca de ${leg.alightAt}.`;
+          }
+
+          return `1. Toma la linea ${leg.linea_operativa} (${leg.sentido}) cerca de ${leg.boardAt} y baja cerca de ${leg.alightAt}.`;
         });
         const transferDetail = itinerary.transfers
           .map((transfer, index) => {
             const [lng, lat] = transfer.point.coordinates;
-            return `Cambio ${index + 1}: ${transfer.is_close ? "cercano" : "con caminata"} (${transfer.distance_meters} m) cerca de ${lat.toFixed(5)}, ${lng.toFixed(5)}.`;
+            const nextLine = legStops[index + 1];
+            const nextLineText = nextLine
+              ? `para tomar la linea ${nextLine.linea_operativa} (${nextLine.sentido})`
+              : "para tomar la siguiente linea";
+
+            return `Transbordo ${index + 1}: baja y camina aprox. ${transfer.distance_meters} m ${nextLineText}, cerca de ${lat.toFixed(5)}, ${lng.toFixed(5)}.`;
           })
           .join(" ");
         const finalWalk = itinerary.walk_segments?.find((segment) => segment.type === "final");

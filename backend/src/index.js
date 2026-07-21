@@ -8,7 +8,7 @@ const adminPassword = process.env.ADMIN_PASSWORD || "admin123";
 const DIRECT_DESTINATION_RADIUS_METERS = 300;
 const WALK_ONLY_RADIUS_METERS = 700;
 const FINAL_WALK_RADIUS_METERS = 900;
-const SINGLE_ROUTE_PREFERRED_FINAL_WALK_METERS = 450;
+const SINGLE_ROUTE_PREFERRED_FINAL_WALK_METERS = DIRECT_DESTINATION_RADIUS_METERS;
 const ROUTE_ACCESS_RADIUS_METERS = 900;
 const TRANSFER_WARNING_RADIUS_METERS = 650;
 const TRANSFER_SEARCH_RADIUS_METERS = 1200;
@@ -844,7 +844,7 @@ app.get("/routes/plan", async (req, res) => {
       .filter(
         (itinerary) =>
           itinerary.vehicle_count === 0 ||
-          (itinerary.vehicle_count === 1 &&
+          (itinerary.type === "direct" &&
             itinerary.destination_distance_meters <= SINGLE_ROUTE_PREFERRED_FINAL_WALK_METERS)
       )
       .sort((first, second) => first.score_meters - second.score_meters || first.vehicle_count - second.vehicle_count)[0];
