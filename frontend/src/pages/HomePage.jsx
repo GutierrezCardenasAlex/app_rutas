@@ -228,7 +228,7 @@ function HomePage() {
         }
 
         setRoutePlan(plan);
-        const defaultIndex = plan.direct.length > 0 && plan.transfers.length > 0 ? plan.direct.length : 0;
+        const defaultIndex = 0;
         setSelectedPlanIndex(defaultIndex);
 
         if (plan.itineraries?.length > 0) {
@@ -311,6 +311,9 @@ function HomePage() {
           finalWalk && finalWalk.distance_meters > 0
             ? ` Luego camina aprox. ${finalWalk.distance_meters} m hasta el destino.`
             : "";
+        const rideDetail = itinerary.ride_distance_meters
+          ? `Recorrido aproximado en micro: ${itinerary.ride_distance_meters} m. `
+          : "";
 
         return {
           type: itinerary.vehicle_count === 1 ? "direct" : "multi",
@@ -326,7 +329,7 @@ function HomePage() {
             ? [itinerary.transfers[0].point.coordinates[1], itinerary.transfers[0].point.coordinates[0]]
             : null,
           description: `${steps.join(" ")}${finalInstruction}`,
-          details: `${transferDetail ? `${transferDetail} ` : ""}${walkDetail ? `${walkDetail} ` : ""}La ultima linea te deja a ${itinerary.destination_distance_meters} m del destino.`,
+          details: `${rideDetail}${transferDetail ? `${transferDetail} ` : ""}${walkDetail ? `${walkDetail} ` : ""}La ultima linea te deja a ${itinerary.destination_distance_meters} m del destino.`,
         };
       });
     }

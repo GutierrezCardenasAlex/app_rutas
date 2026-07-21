@@ -13,6 +13,8 @@ const ROUTE_ACCESS_RADIUS_METERS = 900;
 const TRANSFER_WARNING_RADIUS_METERS = 650;
 const TRANSFER_SEARCH_RADIUS_METERS = 1200;
 const MAX_ITINERARY_VEHICLES = 3;
+const WALK_SCORE_WEIGHT = 1.25;
+const RIDE_SCORE_WEIGHT = 0.35;
 
 function toRadians(value) {
   return (value * Math.PI) / 180;
@@ -73,6 +75,32 @@ function nearestPointOnRoute(route, point) {
   }
 
   return best || { point, fraction: 0, distance_meters: Number.POSITIVE_INFINITY };
+}
+
+function routeLengthMeters(route) {
+  const coordinates = route.geometry?.coordinates || [];
+  let length = 0;
+
+  for (let index = 0; index < coordinates.length - 1; index += 1) {
+    length += distanceMeters(
+      { lng: coordinates[index][0], lat: coordinates[index][1] },
+      { lng: coordinates[index + 1][0], lat: coordinates[index + 1][1] }
+    );
+  }
+
+  return Math.round(length);
+}
+
+function routeLegDistanceMeters(route, boardFraction, alightFraction) {
+  return Math.round(Math.abs(Number(alightFraction) - Number(boardFraction)) * (route.route_length_meters || 0));
+}
+
+function canTravelRoute(route, boardFraction, alightFraction) {
+  if (route.sentido === "ambos") {
+    return true;
+  }
+
+  return Number(alightFraction) >= Number(boardFraction) - 0.02;
 }
 
 function nearestRoutesPoint(firstRoute, secondRoute) {
@@ -500,6 +528,7 @@ app.get("/routes/plan", async (req, res) => {
 
         return {
           ...route,
+          route_length_meters: routeLengthMeters(route),
           origin_distance_meters: originMeasure.distance_meters,
           destination_distance_meters: destinationMeasure.distance_meters,
           origin_fraction: originMeasure.fraction,
@@ -512,7 +541,8 @@ app.get("/routes/plan", async (req, res) => {
       .filter(
         (route) =>
           route.origin_distance_meters <= ROUTE_ACCESS_RADIUS_METERS &&
-          route.destination_distance_meters <= DIRECT_DESTINATION_RADIUS_METERS
+          route.destination_distance_meters <= DIRECT_DESTINATION_RADIUS_METERS &&
+          canTravelRoute(route, route.origin_fraction, route.destination_fraction)
       )
       .sort(
         (first, second) =>
@@ -619,6 +649,13 @@ app.get("/routes/plan", async (req, res) => {
     const walkingDistanceToDestination = Math.round(distanceMeters(origin, destination));
     const vehiclePenaltyMeters = 260;
 
+    const scoreItinerary = ({ originWalk = 0, transferWalks = [], finalWalk = 0, rideMeters = 0, vehicles = 0 }) =>
+      originWalk * WALK_SCORE_WEIGHT +
+      transferWalks.reduce((total, distance) => total + distance * WALK_SCORE_WEIGHT, 0) +
+      finalWalk * WALK_SCORE_WEIGHT +
+      rideMeters * RIDE_SCORE_WEIGHT +
+      vehicles * vehiclePenaltyMeters;
+
     const buildWalkSegments = ({ originWalk = 0, transferWalks = [], finalWalk = 0 }) =>
       [
         originWalk > 0
@@ -664,11 +701,13 @@ app.get("/routes/plan", async (req, res) => {
         transfers: [],
         walk_segments: buildWalkSegments({ finalWalk: walkingDistanceToDestination }),
         destination_distance_meters: 0,
-        score_meters: walkingDistanceToDestination,
+        score_meters: scoreItinerary({ finalWalk: walkingDistanceToDestination }),
       });
     }
 
     for (const route of direct) {
+      const rideMeters = routeLegDistanceMeters(route, route.origin_fraction, route.destination_fraction);
+
       addItinerary({
         type: "direct",
         vehicle_count: 1,
@@ -681,7 +720,13 @@ app.get("/routes/plan", async (req, res) => {
           finalWalk: route.destination_distance_meters,
         }),
         destination_distance_meters: route.destination_distance_meters,
-        score_meters: route.origin_distance_meters + route.destination_distance_meters + vehiclePenaltyMeters,
+        ride_distance_meters: rideMeters,
+        score_meters: scoreItinerary({
+          originWalk: route.origin_distance_meters,
+          finalWalk: route.destination_distance_meters,
+          rideMeters,
+          vehicles: 1,
+        }),
       });
     }
 
@@ -690,9 +735,14 @@ app.get("/routes/plan", async (req, res) => {
         continue;
       }
 
-      if (route.destination_distance_meters > FINAL_WALK_RADIUS_METERS) {
+      if (
+        route.destination_distance_meters > FINAL_WALK_RADIUS_METERS ||
+        !canTravelRoute(route, route.origin_fraction, route.destination_fraction)
+      ) {
         continue;
       }
+
+      const rideMeters = routeLegDistanceMeters(route, route.origin_fraction, route.destination_fraction);
 
       addItinerary({
         type: "ride_walk",
@@ -706,16 +756,25 @@ app.get("/routes/plan", async (req, res) => {
           finalWalk: route.destination_distance_meters,
         }),
         destination_distance_meters: route.destination_distance_meters,
-        score_meters: route.origin_distance_meters + route.destination_distance_meters + vehiclePenaltyMeters,
+        ride_distance_meters: rideMeters,
+        score_meters: scoreItinerary({
+          originWalk: route.origin_distance_meters,
+          finalWalk: route.destination_distance_meters,
+          rideMeters,
+          vehicles: 1,
+        }),
       });
     }
 
-    const hasPreferredSimpleOption = [...itineraryByKey.values()].some(
-      (itinerary) =>
-        itinerary.vehicle_count === 0 ||
-        (itinerary.vehicle_count === 1 &&
-          itinerary.destination_distance_meters <= SINGLE_ROUTE_PREFERRED_FINAL_WALK_METERS)
-    );
+    const preferredSimpleItinerary = [...itineraryByKey.values()]
+      .filter(
+        (itinerary) =>
+          itinerary.vehicle_count === 0 ||
+          (itinerary.vehicle_count === 1 &&
+            itinerary.destination_distance_meters <= SINGLE_ROUTE_PREFERRED_FINAL_WALK_METERS)
+      )
+      .sort((first, second) => first.score_meters - second.score_meters || first.vehicle_count - second.vehicle_count)[0];
+    const hasPreferredSimpleOption = Boolean(preferredSimpleItinerary);
 
     if (!hasPreferredSimpleOption) {
       for (const firstRoute of originRoutes) {
@@ -729,6 +788,16 @@ app.get("/routes/plan", async (req, res) => {
           if (!Number.isFinite(transfer.distance_meters) || transfer.distance_meters > TRANSFER_SEARCH_RADIUS_METERS) {
             continue;
           }
+
+          if (
+            !canTravelRoute(firstRoute, firstRoute.origin_fraction, transfer.from_fraction) ||
+            !canTravelRoute(secondRoute, transfer.to_fraction, secondRoute.destination_fraction)
+          ) {
+            continue;
+          }
+
+          const firstRideMeters = routeLegDistanceMeters(firstRoute, firstRoute.origin_fraction, transfer.from_fraction);
+          const secondRideMeters = routeLegDistanceMeters(secondRoute, transfer.to_fraction, secondRoute.destination_fraction);
 
           addItinerary({
             type: "multi",
@@ -746,11 +815,15 @@ app.get("/routes/plan", async (req, res) => {
               finalWalk: secondRoute.destination_distance_meters,
             }),
             destination_distance_meters: secondRoute.destination_distance_meters,
+            ride_distance_meters: firstRideMeters + secondRideMeters,
             score_meters:
-              firstRoute.origin_distance_meters +
-              transfer.distance_meters +
-              secondRoute.destination_distance_meters +
-              vehiclePenaltyMeters * 2,
+              scoreItinerary({
+                originWalk: firstRoute.origin_distance_meters,
+                transferWalks: [transfer.distance_meters],
+                finalWalk: secondRoute.destination_distance_meters,
+                rideMeters: firstRideMeters + secondRideMeters,
+                vehicles: 2,
+              }),
           });
         }
       }
@@ -765,7 +838,8 @@ app.get("/routes/plan", async (req, res) => {
 
           if (
             !Number.isFinite(firstTransfer.distance_meters) ||
-            firstTransfer.distance_meters > TRANSFER_SEARCH_RADIUS_METERS
+            firstTransfer.distance_meters > TRANSFER_SEARCH_RADIUS_METERS ||
+            !canTravelRoute(firstRoute, firstRoute.origin_fraction, firstTransfer.from_fraction)
           ) {
             continue;
           }
@@ -786,10 +860,16 @@ app.get("/routes/plan", async (req, res) => {
 
             if (
               !Number.isFinite(secondTransfer.distance_meters) ||
-              secondTransfer.distance_meters > TRANSFER_SEARCH_RADIUS_METERS
+              secondTransfer.distance_meters > TRANSFER_SEARCH_RADIUS_METERS ||
+              !canTravelRoute(middleRoute, firstTransfer.to_fraction, secondTransfer.from_fraction) ||
+              !canTravelRoute(finalRoute, secondTransfer.to_fraction, finalRoute.destination_fraction)
             ) {
               continue;
             }
+
+            const firstRideMeters = routeLegDistanceMeters(firstRoute, firstRoute.origin_fraction, firstTransfer.from_fraction);
+            const middleRideMeters = routeLegDistanceMeters(middleRoute, firstTransfer.to_fraction, secondTransfer.from_fraction);
+            const finalRideMeters = routeLegDistanceMeters(finalRoute, secondTransfer.to_fraction, finalRoute.destination_fraction);
 
             addItinerary({
               type: "multi",
@@ -808,12 +888,15 @@ app.get("/routes/plan", async (req, res) => {
                 finalWalk: finalRoute.destination_distance_meters,
               }),
               destination_distance_meters: finalRoute.destination_distance_meters,
+              ride_distance_meters: firstRideMeters + middleRideMeters + finalRideMeters,
               score_meters:
-                firstRoute.origin_distance_meters +
-                firstTransfer.distance_meters +
-                secondTransfer.distance_meters +
-                finalRoute.destination_distance_meters +
-                vehiclePenaltyMeters * 3,
+                scoreItinerary({
+                  originWalk: firstRoute.origin_distance_meters,
+                  transferWalks: [firstTransfer.distance_meters, secondTransfer.distance_meters],
+                  finalWalk: finalRoute.destination_distance_meters,
+                  rideMeters: firstRideMeters + middleRideMeters + finalRideMeters,
+                  vehicles: 3,
+                }),
             });
           }
         }
@@ -822,9 +905,11 @@ app.get("/routes/plan", async (req, res) => {
 
     itineraries.push(...itineraryByKey.values());
 
-    const itineraryRows = itineraries
-      .sort((first, second) => first.score_meters - second.score_meters || first.vehicle_count - second.vehicle_count)
-      .slice(0, 8);
+    const itineraryRows = preferredSimpleItinerary
+      ? [preferredSimpleItinerary]
+      : itineraries
+          .sort((first, second) => first.score_meters - second.score_meters || first.vehicle_count - second.vehicle_count)
+          .slice(0, 8);
 
     res.json({
       direct,
