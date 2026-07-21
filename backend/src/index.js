@@ -9,6 +9,7 @@ const DIRECT_DESTINATION_RADIUS_METERS = 300;
 const ROUTE_ACCESS_RADIUS_METERS = 900;
 const TRANSFER_WARNING_RADIUS_METERS = 650;
 const TRANSFER_SEARCH_RADIUS_METERS = 1800;
+const MAX_ITINERARY_VEHICLES = 3;
 
 function toRadians(value) {
   return (value * Math.PI) / 180;
@@ -106,6 +107,21 @@ function nearestRoutesPoint(firstRoute, secondRoute) {
     first_point: { lat: 0, lng: 0 },
     second_point: { lat: 0, lng: 0 },
     distance_meters: Number.POSITIVE_INFINITY,
+  };
+}
+
+function buildRouteLeg(route, boardFraction, alightFraction) {
+  return {
+    route_id: route.id,
+    linea_display: route.linea_display,
+    linea_operativa: route.linea_operativa,
+    sentido: route.sentido,
+    nombre: route.nombre,
+    descripcion: route.descripcion,
+    referencias: route.referencias,
+    geometry: route.geometry,
+    board_fraction: boardFraction,
+    alight_fraction: alightFraction,
   };
 }
 
@@ -431,17 +447,153 @@ app.get("/routes/plan", async (req, res) => {
     }
 
     const transferRows = transfers.sort((first, second) => first.score_meters - second.score_meters).slice(0, 5);
+    const destinationCandidates = measuredRoutes.filter(
+      (route) => route.destination_distance_meters <= ROUTE_ACCESS_RADIUS_METERS * 2
+    );
+    const transferCache = new Map();
+    const getTransfer = (firstRoute, secondRoute) => {
+      const key = `${firstRoute.id}:${secondRoute.id}`;
+
+      if (!transferCache.has(key)) {
+        const transfer = nearestRoutesPoint(firstRoute, secondRoute);
+        const firstTransfer = nearestPointOnRoute(firstRoute, transfer.first_point);
+        const secondTransfer = nearestPointOnRoute(secondRoute, transfer.second_point);
+
+        transferCache.set(key, {
+          distance_meters: transfer.distance_meters,
+          point: {
+            type: "Point",
+            coordinates: [transfer.first_point.lng, transfer.first_point.lat],
+          },
+          from_fraction: firstTransfer.fraction,
+          to_fraction: secondTransfer.fraction,
+          is_close: transfer.distance_meters <= TRANSFER_WARNING_RADIUS_METERS,
+        });
+      }
+
+      return transferCache.get(key);
+    };
+
+    const routeToDestinationLeg = (route, boardFraction = route.origin_fraction) =>
+      buildRouteLeg(route, boardFraction, route.destination_fraction);
+    const itineraries = [];
+
+    for (const route of direct) {
+      itineraries.push({
+        type: "direct",
+        vehicle_count: 1,
+        route_ids: [route.id],
+        title: `Toma ${route.linea_display}`,
+        legs: [routeToDestinationLeg(route)],
+        transfers: [],
+        destination_distance_meters: route.destination_distance_meters,
+        score_meters: route.origin_distance_meters + route.destination_distance_meters,
+      });
+    }
+
+    for (const firstRoute of originRoutes) {
+      for (const secondRoute of destinationCandidates) {
+        if (firstRoute.id === secondRoute.id || firstRoute.linea_operativa === secondRoute.linea_operativa) {
+          continue;
+        }
+
+        const transfer = getTransfer(firstRoute, secondRoute);
+
+        if (!Number.isFinite(transfer.distance_meters) || transfer.distance_meters > TRANSFER_SEARCH_RADIUS_METERS) {
+          continue;
+        }
+
+        itineraries.push({
+          type: "multi",
+          vehicle_count: 2,
+          route_ids: [firstRoute.id, secondRoute.id],
+          title: `Toma ${firstRoute.linea_display} y luego ${secondRoute.linea_display}`,
+          legs: [
+            buildRouteLeg(firstRoute, firstRoute.origin_fraction, transfer.from_fraction),
+            routeToDestinationLeg(secondRoute, transfer.to_fraction),
+          ],
+          transfers: [transfer],
+          destination_distance_meters: secondRoute.destination_distance_meters,
+          score_meters: firstRoute.origin_distance_meters + transfer.distance_meters + secondRoute.destination_distance_meters,
+        });
+      }
+    }
+
+    for (const firstRoute of originRoutes) {
+      for (const middleRoute of measuredRoutes) {
+        if (firstRoute.id === middleRoute.id || firstRoute.linea_operativa === middleRoute.linea_operativa) {
+          continue;
+        }
+
+        const firstTransfer = getTransfer(firstRoute, middleRoute);
+
+        if (
+          !Number.isFinite(firstTransfer.distance_meters) ||
+          firstTransfer.distance_meters > TRANSFER_SEARCH_RADIUS_METERS
+        ) {
+          continue;
+        }
+
+        for (const finalRoute of destinationCandidates) {
+          const routeIds = new Set([firstRoute.id, middleRoute.id, finalRoute.id]);
+          const lineNames = new Set([
+            firstRoute.linea_operativa,
+            middleRoute.linea_operativa,
+            finalRoute.linea_operativa,
+          ]);
+
+          if (routeIds.size < MAX_ITINERARY_VEHICLES || lineNames.size < MAX_ITINERARY_VEHICLES) {
+            continue;
+          }
+
+          const secondTransfer = getTransfer(middleRoute, finalRoute);
+
+          if (
+            !Number.isFinite(secondTransfer.distance_meters) ||
+            secondTransfer.distance_meters > TRANSFER_SEARCH_RADIUS_METERS
+          ) {
+            continue;
+          }
+
+          itineraries.push({
+            type: "multi",
+            vehicle_count: 3,
+            route_ids: [firstRoute.id, middleRoute.id, finalRoute.id],
+            title: `Toma ${firstRoute.linea_display}, luego ${middleRoute.linea_display} y luego ${finalRoute.linea_display}`,
+            legs: [
+              buildRouteLeg(firstRoute, firstRoute.origin_fraction, firstTransfer.from_fraction),
+              buildRouteLeg(middleRoute, firstTransfer.to_fraction, secondTransfer.from_fraction),
+              routeToDestinationLeg(finalRoute, secondTransfer.to_fraction),
+            ],
+            transfers: [firstTransfer, secondTransfer],
+            destination_distance_meters: finalRoute.destination_distance_meters,
+            score_meters:
+              firstRoute.origin_distance_meters +
+              firstTransfer.distance_meters +
+              secondTransfer.distance_meters +
+              finalRoute.destination_distance_meters,
+          });
+        }
+      }
+    }
+
+    const itineraryRows = itineraries
+      .sort((first, second) => first.vehicle_count - second.vehicle_count || first.score_meters - second.score_meters)
+      .slice(0, 8);
 
     res.json({
       direct,
       transfers: transferRows,
+      itineraries: itineraryRows,
       direct_destination_radius_meters: DIRECT_DESTINATION_RADIUS_METERS,
       route_access_radius_meters: ROUTE_ACCESS_RADIUS_METERS,
       transfer_warning_radius_meters: TRANSFER_WARNING_RADIUS_METERS,
       transfer_search_radius_meters: TRANSFER_SEARCH_RADIUS_METERS,
+      max_itinerary_vehicles: MAX_ITINERARY_VEHICLES,
       counts: {
         direct: direct.length,
         transfers: transferRows.length,
+        itineraries: itineraryRows.length,
       },
     });
   } catch (error) {

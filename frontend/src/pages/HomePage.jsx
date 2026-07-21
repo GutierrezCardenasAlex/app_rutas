@@ -103,6 +103,21 @@ function HomePage() {
       });
     });
 
+    routePlan?.itineraries?.forEach((itinerary) => {
+      itinerary.legs.forEach((leg) => {
+        routeMap.set(leg.route_id, {
+          id: leg.route_id,
+          linea_display: leg.linea_display,
+          linea_operativa: leg.linea_operativa,
+          sentido: leg.sentido,
+          nombre: leg.nombre,
+          descripcion: leg.descripcion,
+          referencias: leg.referencias,
+          geometry: leg.geometry,
+        });
+      });
+    });
+
     return Array.from(routeMap.values());
   }, [allRoutes, nearbyRoutes, routePlan]);
 
@@ -126,12 +141,10 @@ function HomePage() {
         const defaultIndex = plan.direct.length > 0 && plan.transfers.length > 0 ? plan.direct.length : 0;
         setSelectedPlanIndex(defaultIndex);
 
-        if (plan.direct.length > 0) {
-          setSelectedRouteId(plan.transfers.length > 0 ? plan.transfers[0].first_route_id : plan.direct[0].id);
+        if (plan.itineraries?.length > 0) {
+          setSelectedRouteId(plan.itineraries[defaultIndex]?.route_ids[0] || plan.itineraries[0].route_ids[0]);
           setPlanStatus(
-            plan.transfers.length > 0
-              ? "Se encontraron opciones directas y tambien combinaciones con transbordo."
-              : "Se encontro una linea directa."
+            `Se encontraron ${plan.itineraries.length} opciones para llegar al destino.`
           );
           return;
         }
@@ -158,6 +171,38 @@ function HomePage() {
   const recommendations = useMemo(() => {
     if (!routePlan) {
       return [];
+    }
+
+    if (routePlan.itineraries?.length > 0) {
+      return routePlan.itineraries.map((itinerary) => {
+        const routeNames = itinerary.legs.map((leg) => leg.linea_display).join(" -> ");
+        const steps = itinerary.legs.map((leg, index) => {
+          const boardFallback = index === 0 ? "tu ubicacion" : "el punto de cambio";
+          const alightFallback = index === itinerary.legs.length - 1 ? "el destino marcado" : "el siguiente cambio";
+          const boardAt = pickReference(leg.referencias, leg.board_fraction, boardFallback);
+          const alightAt = pickReference(leg.referencias, leg.alight_fraction, alightFallback);
+
+          return `${index + 1}. Toma ${leg.linea_operativa} (${leg.sentido}) cerca de ${boardAt} y baja cerca de ${alightAt}.`;
+        });
+        const transferDetail = itinerary.transfers
+          .map((transfer, index) => {
+            const [lng, lat] = transfer.point.coordinates;
+            return `Cambio ${index + 1}: ${transfer.is_close ? "cercano" : "con caminata"} (${transfer.distance_meters} m) cerca de ${lat.toFixed(5)}, ${lng.toFixed(5)}.`;
+          })
+          .join(" ");
+
+        return {
+          type: itinerary.vehicle_count === 1 ? "direct" : "multi",
+          title: itinerary.vehicle_count === 1 ? `Toma ${routeNames}` : `Lineas: ${routeNames}`,
+          routeIds: itinerary.route_ids,
+          vehicleCount: itinerary.vehicle_count,
+          transferPoint: itinerary.transfers[0]
+            ? [itinerary.transfers[0].point.coordinates[1], itinerary.transfers[0].point.coordinates[0]]
+            : null,
+          description: steps.join(" "),
+          details: `${transferDetail ? `${transferDetail} ` : ""}La ultima linea te deja a ${itinerary.destination_distance_meters} m del destino.`,
+        };
+      });
     }
 
     return [
@@ -242,13 +287,13 @@ function HomePage() {
           {!destinationPoint ? <p className="muted">Marca tu destino en el mapa para calcular lineas y transbordos.</p> : null}
           {planStatus ? <p className="muted">{planStatus}</p> : null}
           {routePlan ? (
-            <p className="muted">{`Opciones: ${routePlan.counts?.direct || 0} directas, ${routePlan.counts?.transfers || 0} con 2 micros.`}</p>
+            <p className="muted">{`Opciones: ${routePlan.counts?.itineraries || 0} alternativas calculadas.`}</p>
           ) : null}
           {selectedRecommendation ? (
             <p className="trip-count">
-              {selectedRecommendation.vehicleCount === 1
-                ? "Necesitas tomar 1 micro."
-                : "Necesitas tomar 2 micros."}
+              {`Necesitas tomar ${selectedRecommendation.vehicleCount} ${
+                selectedRecommendation.vehicleCount === 1 ? "micro" : "micros"
+              }.`}
             </p>
           ) : null}
           {recommendations.length > 0 ? (
@@ -264,7 +309,9 @@ function HomePage() {
                     }}
                   >
                     <span>{recommendation.title}</span>
-                    <small>{recommendation.vehicleCount === 1 ? "1 micro" : "2 micros"}</small>
+                    <small>{`${recommendation.vehicleCount} ${
+                      recommendation.vehicleCount === 1 ? "micro" : "micros"
+                    }`}</small>
                   </button>
                   {index === selectedPlanIndex ? (
                     <div className="plan-detail">
