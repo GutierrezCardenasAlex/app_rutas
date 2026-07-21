@@ -17,6 +17,13 @@ const destinationIcon = new L.Icon({
   className: "destination-marker",
 });
 
+const transferIcon = new L.Icon({
+  iconUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png",
+  shadowUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png",
+  iconAnchor: [12, 41],
+  className: "transfer-marker",
+});
+
 function RecenterMap({ center }) {
   const map = useMap();
 
@@ -49,7 +56,16 @@ function DestinationSelector({ onDestinationSelect }) {
   return null;
 }
 
-function RouteMap({ center, destinationPoint, onDestinationSelect, routes, selectedRouteId, selectedRouteIds = [], height = "70vh" }) {
+function RouteMap({
+  center,
+  destinationPoint,
+  transferPoint,
+  onDestinationSelect,
+  routes,
+  selectedRouteId,
+  selectedRouteIds = [],
+  height = "70vh",
+}) {
   const highlightedIds = new Set([selectedRouteId, ...selectedRouteIds].filter(Boolean));
 
   return (
@@ -81,6 +97,11 @@ function RouteMap({ center, destinationPoint, onDestinationSelect, routes, selec
             weight: 4,
           }}
         />
+      ) : null}
+      {transferPoint ? (
+        <Marker position={transferPoint} icon={transferIcon}>
+          <Popup>Punto aproximado para cambiar de micro</Popup>
+        </Marker>
       ) : null}
       {routes.map((route) => (
         <Polyline

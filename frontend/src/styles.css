@@ -231,6 +231,10 @@ select {
   filter: hue-rotate(95deg) saturate(1.4);
 }
 
+.transfer-marker {
+  filter: hue-rotate(160deg) saturate(1.6);
+}
+
 .admin-form {
   display: flex;
   flex-direction: column;

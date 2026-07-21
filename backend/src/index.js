@@ -8,6 +8,7 @@ const adminPassword = process.env.ADMIN_PASSWORD || "admin123";
 const DIRECT_DESTINATION_RADIUS_METERS = 300;
 const ROUTE_ACCESS_RADIUS_METERS = 900;
 const TRANSFER_WARNING_RADIUS_METERS = 650;
+const TRANSFER_SEARCH_RADIUS_METERS = 1500;
 
 app.use(cors());
 app.use(express.json({ limit: "2mb" }));
@@ -297,7 +298,6 @@ app.get("/routes/plan", async (req, res) => {
           FROM rutas r
           JOIN rutas_geometria rg ON rg.ruta_id = r.id
           CROSS JOIN points
-          WHERE ST_DWithin(rg.geom::geography, points.destination, $5)
         )
         SELECT
           'transfer' AS type,
@@ -327,12 +327,18 @@ app.get("/routes/plan", async (req, res) => {
           CASE
             WHEN ST_Distance(o.geom::geography, d.geom::geography) <= $6 THEN true
             ELSE false
-          END AS transfer_is_close
+          END AS transfer_is_close,
+          ROUND(
+            o.origin_distance_meters +
+            d.destination_distance_meters +
+            ST_Distance(o.geom::geography, d.geom::geography)
+          ) AS score_meters
         FROM origin_routes o
         JOIN destination_routes d ON d.id <> o.id
           AND d.linea_operativa <> o.linea_operativa
+          AND ST_DWithin(o.geom::geography, d.geom::geography, $7)
         ORDER BY
-          o.origin_distance_meters + d.destination_distance_meters + ST_Distance(o.geom::geography, d.geom::geography) ASC
+          score_meters ASC
         LIMIT 5
       `,
       [
@@ -342,6 +348,7 @@ app.get("/routes/plan", async (req, res) => {
         destinationLatitude,
         ROUTE_ACCESS_RADIUS_METERS,
         TRANSFER_WARNING_RADIUS_METERS,
+        TRANSFER_SEARCH_RADIUS_METERS,
       ]
     );
 
@@ -351,6 +358,7 @@ app.get("/routes/plan", async (req, res) => {
       direct_destination_radius_meters: DIRECT_DESTINATION_RADIUS_METERS,
       route_access_radius_meters: ROUTE_ACCESS_RADIUS_METERS,
       transfer_warning_radius_meters: TRANSFER_WARNING_RADIUS_METERS,
+      transfer_search_radius_meters: TRANSFER_SEARCH_RADIUS_METERS,
       counts: {
         direct: directResult.rowCount,
         transfers: transferResult.rowCount,

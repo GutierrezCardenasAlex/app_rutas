@@ -123,10 +123,11 @@ function HomePage() {
         }
 
         setRoutePlan(plan);
-        setSelectedPlanIndex(0);
+        const defaultIndex = plan.direct.length > 0 && plan.transfers.length > 0 ? plan.direct.length : 0;
+        setSelectedPlanIndex(defaultIndex);
 
         if (plan.direct.length > 0) {
-          setSelectedRouteId(plan.direct[0].id);
+          setSelectedRouteId(plan.transfers.length > 0 ? plan.transfers[0].first_route_id : plan.direct[0].id);
           setPlanStatus(
             plan.transfers.length > 0
               ? "Se encontraron opciones directas y tambien combinaciones con transbordo."
@@ -179,8 +180,9 @@ function HomePage() {
           title: `Toma ${plan.first_linea_display} y luego ${plan.second_linea_display}`,
           routeIds: [plan.first_route_id, plan.second_route_id],
           vehicleCount: 2,
+          transferPoint: [transferLat, transferLng],
           description: `Primero toma ${plan.first_linea_operativa} (${plan.first_sentido}) y baja cerca de ${firstStop}. Luego busca ${plan.second_linea_operativa} (${plan.second_sentido}) cerca de ${secondStop} y sigue hasta ${finalStop}.`,
-          details: `${plan.transfer_is_close ? "Transbordo cercano" : "Transbordo con caminata"}: ${transferLat.toFixed(5)}, ${transferLng.toFixed(5)}. Las lineas se acercan a ${plan.transfer_distance_meters} m.`,
+          details: `${plan.transfer_is_close ? "Transbordo cercano" : "Transbordo con caminata"}: ${transferLat.toFixed(5)}, ${transferLng.toFixed(5)}. Las lineas se acercan a ${plan.transfer_distance_meters} m. La segunda linea te deja a ${plan.destination_distance_meters} m del destino.`,
         };
       }),
     ];
@@ -239,6 +241,9 @@ function HomePage() {
           {!position ? <p className="muted">Activa tu ubicacion para calcular desde donde estas.</p> : null}
           {!destinationPoint ? <p className="muted">Marca tu destino en el mapa para calcular lineas y transbordos.</p> : null}
           {planStatus ? <p className="muted">{planStatus}</p> : null}
+          {routePlan ? (
+            <p className="muted">{`Opciones: ${routePlan.counts?.direct || 0} directas, ${routePlan.counts?.transfers || 0} con 2 micros.`}</p>
+          ) : null}
           {selectedRecommendation ? (
             <p className="trip-count">
               {selectedRecommendation.vehicleCount === 1
@@ -321,6 +326,7 @@ function HomePage() {
           routes={routesToDisplay}
           selectedRouteId={selectedRouteId}
           selectedRouteIds={selectedRecommendation?.routeIds || []}
+          transferPoint={selectedRecommendation?.transferPoint}
         />
       </div>
     </section>
