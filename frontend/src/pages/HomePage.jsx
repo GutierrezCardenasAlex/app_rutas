@@ -73,7 +73,7 @@ function HomePage() {
   }, []);
 
   const routesToDisplay = useMemo(() => {
-    const baseRoutes = nearbyRoutes.length > 0 ? nearbyRoutes : allRoutes;
+    const baseRoutes = allRoutes;
     const routeMap = new Map(baseRoutes.map((route) => [route.id, route]));
 
     routePlan?.direct?.forEach((route) => {
