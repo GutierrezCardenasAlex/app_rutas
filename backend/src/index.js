@@ -844,18 +844,7 @@ app.get("/routes/plan", async (req, res) => {
       });
     }
 
-    const preferredSimpleItinerary = [...itineraryByKey.values()]
-      .filter(
-        (itinerary) =>
-          itinerary.vehicle_count === 0 ||
-          (itinerary.type === "direct" &&
-            itinerary.destination_distance_meters <= SINGLE_ROUTE_PREFERRED_FINAL_WALK_METERS)
-      )
-      .sort((first, second) => first.score_meters - second.score_meters || first.vehicle_count - second.vehicle_count)[0];
-    const hasPreferredSimpleOption = Boolean(preferredSimpleItinerary);
-
-    if (!hasPreferredSimpleOption) {
-      for (const firstRoute of originRoutes) {
+    for (const firstRoute of originRoutes) {
         for (const secondRoute of destinationCandidates) {
           if (firstRoute.id === secondRoute.id || firstRoute.linea_operativa === secondRoute.linea_operativa) {
             continue;
@@ -912,7 +901,7 @@ app.get("/routes/plan", async (req, res) => {
         }
       }
 
-      for (const firstRoute of originRoutes) {
+    for (const firstRoute of originRoutes) {
         for (const middleRoute of measuredRoutes) {
           if (firstRoute.id === middleRoute.id || firstRoute.linea_operativa === middleRoute.linea_operativa) {
             continue;
@@ -985,12 +974,15 @@ app.get("/routes/plan", async (req, res) => {
           }
         }
       }
-    }
 
     itineraries.push(...itineraryByKey.values());
 
     const rankItinerary = (itinerary) => {
-      if (itinerary.type === "direct" || itinerary.type === "walk") {
+      if (itinerary.type === "walk") {
+        return 0;
+      }
+
+      if (itinerary.type === "direct" && itinerary.destination_distance_meters <= SINGLE_ROUTE_PREFERRED_FINAL_WALK_METERS) {
         return 0;
       }
 
@@ -1002,14 +994,16 @@ app.get("/routes/plan", async (req, res) => {
         return 2;
       }
 
+      if (itinerary.vehicle_count === 3) {
+        return 2;
+      }
+
       return 3;
     };
 
-    const itineraryRows = preferredSimpleItinerary
-      ? [preferredSimpleItinerary]
-      : itineraries
-          .sort((first, second) => rankItinerary(first) - rankItinerary(second) || first.score_meters - second.score_meters)
-          .slice(0, 8);
+    const itineraryRows = itineraries
+      .sort((first, second) => rankItinerary(first) - rankItinerary(second) || first.score_meters - second.score_meters)
+      .slice(0, 8);
 
     res.json({
       direct,
