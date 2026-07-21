@@ -8,7 +8,7 @@ const adminPassword = process.env.ADMIN_PASSWORD || "admin123";
 const DIRECT_DESTINATION_RADIUS_METERS = 300;
 const WALK_ONLY_RADIUS_METERS = 700;
 const FINAL_WALK_RADIUS_METERS = 900;
-const SINGLE_ROUTE_PREFERRED_FINAL_WALK_METERS = 900;
+const SINGLE_ROUTE_PREFERRED_FINAL_WALK_METERS = 450;
 const ROUTE_ACCESS_RADIUS_METERS = 900;
 const TRANSFER_WARNING_RADIUS_METERS = 650;
 const TRANSFER_SEARCH_RADIUS_METERS = 1200;
@@ -124,6 +124,64 @@ function nearestRoutesPoint(firstRoute, secondRoute) {
   for (const coordinate of secondCoordinates) {
     const secondPoint = { lng: coordinate[0], lat: coordinate[1] };
     const nearestOnFirst = nearestPointOnRoute(firstRoute, secondPoint);
+
+    if (!best || nearestOnFirst.distance_meters < best.distance_meters) {
+      best = {
+        first_point: nearestOnFirst.point,
+        second_point: secondPoint,
+        distance_meters: nearestOnFirst.distance_meters,
+      };
+    }
+  }
+
+  return best || {
+    first_point: { lat: 0, lng: 0 },
+    second_point: { lat: 0, lng: 0 },
+    distance_meters: Number.POSITIVE_INFINITY,
+  };
+}
+
+function nearestRoutesPointForTrip(firstRoute, secondRoute, firstStartFraction, secondEndFraction) {
+  const firstCoordinates = firstRoute.geometry?.coordinates || [];
+  const secondCoordinates = secondRoute.geometry?.coordinates || [];
+  let best = null;
+
+  for (let index = 0; index < firstCoordinates.length; index += 1) {
+    const firstFraction = firstCoordinates.length <= 1 ? 0 : index / (firstCoordinates.length - 1);
+
+    if (!canTravelRoute(firstRoute, firstStartFraction, firstFraction)) {
+      continue;
+    }
+
+    const firstPoint = { lng: firstCoordinates[index][0], lat: firstCoordinates[index][1] };
+    const nearestOnSecond = nearestPointOnRoute(secondRoute, firstPoint);
+
+    if (!canTravelRoute(secondRoute, nearestOnSecond.fraction, secondEndFraction)) {
+      continue;
+    }
+
+    if (!best || nearestOnSecond.distance_meters < best.distance_meters) {
+      best = {
+        first_point: firstPoint,
+        second_point: nearestOnSecond.point,
+        distance_meters: nearestOnSecond.distance_meters,
+      };
+    }
+  }
+
+  for (let index = 0; index < secondCoordinates.length; index += 1) {
+    const secondFraction = secondCoordinates.length <= 1 ? 0 : index / (secondCoordinates.length - 1);
+
+    if (!canTravelRoute(secondRoute, secondFraction, secondEndFraction)) {
+      continue;
+    }
+
+    const secondPoint = { lng: secondCoordinates[index][0], lat: secondCoordinates[index][1] };
+    const nearestOnFirst = nearestPointOnRoute(firstRoute, secondPoint);
+
+    if (!canTravelRoute(firstRoute, firstStartFraction, nearestOnFirst.fraction)) {
+      continue;
+    }
 
     if (!best || nearestOnFirst.distance_meters < best.distance_meters) {
       best = {
@@ -644,6 +702,22 @@ app.get("/routes/plan", async (req, res) => {
 
     const routeToDestinationLeg = (route, boardFraction = route.origin_fraction) =>
       buildRouteLeg(route, boardFraction, route.destination_fraction);
+    const buildTripTransfer = (firstRoute, secondRoute, firstStartFraction, secondEndFraction) => {
+      const transfer = nearestRoutesPointForTrip(firstRoute, secondRoute, firstStartFraction, secondEndFraction);
+      const firstTransfer = nearestPointOnRoute(firstRoute, transfer.first_point);
+      const secondTransfer = nearestPointOnRoute(secondRoute, transfer.second_point);
+
+      return {
+        distance_meters: transfer.distance_meters,
+        point: {
+          type: "Point",
+          coordinates: [transfer.first_point.lng, transfer.first_point.lat],
+        },
+        from_fraction: firstTransfer.fraction,
+        to_fraction: secondTransfer.fraction,
+        is_close: transfer.distance_meters <= TRANSFER_WARNING_RADIUS_METERS,
+      };
+    };
     const itineraries = [];
     const itineraryByKey = new Map();
     const walkingDistanceToDestination = Math.round(distanceMeters(origin, destination));
@@ -783,7 +857,12 @@ app.get("/routes/plan", async (req, res) => {
             continue;
           }
 
-          const transfer = getTransfer(firstRoute, secondRoute);
+          const transfer = buildTripTransfer(
+            firstRoute,
+            secondRoute,
+            firstRoute.origin_fraction,
+            secondRoute.destination_fraction
+          );
 
           if (!Number.isFinite(transfer.distance_meters) || transfer.distance_meters > TRANSFER_SEARCH_RADIUS_METERS) {
             continue;
