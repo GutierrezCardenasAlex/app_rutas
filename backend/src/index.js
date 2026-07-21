@@ -6,9 +6,11 @@ const app = express();
 const port = Number(process.env.PORT || 3001);
 const adminPassword = process.env.ADMIN_PASSWORD || "admin123";
 const DIRECT_DESTINATION_RADIUS_METERS = 300;
+const WALK_ONLY_RADIUS_METERS = 700;
+const FINAL_WALK_RADIUS_METERS = 900;
 const ROUTE_ACCESS_RADIUS_METERS = 900;
 const TRANSFER_WARNING_RADIUS_METERS = 650;
-const TRANSFER_SEARCH_RADIUS_METERS = 1800;
+const TRANSFER_SEARCH_RADIUS_METERS = 1200;
 const MAX_ITINERARY_VEHICLES = 3;
 
 function toRadians(value) {
@@ -389,7 +391,7 @@ app.get("/routes/plan", async (req, res) => {
       }));
 
     const originRoutes = measuredRoutes.filter((route) => route.origin_distance_meters <= ROUTE_ACCESS_RADIUS_METERS);
-    const destinationRoutes = measuredRoutes.filter((route) => route.destination_distance_meters <= ROUTE_ACCESS_RADIUS_METERS * 2);
+    const destinationRoutes = measuredRoutes.filter((route) => route.destination_distance_meters <= FINAL_WALK_RADIUS_METERS);
 
     const transfers = [];
 
@@ -448,7 +450,7 @@ app.get("/routes/plan", async (req, res) => {
 
     const transferRows = transfers.sort((first, second) => first.score_meters - second.score_meters).slice(0, 5);
     const destinationCandidates = measuredRoutes.filter(
-      (route) => route.destination_distance_meters <= ROUTE_ACCESS_RADIUS_METERS * 2
+      (route) => route.destination_distance_meters <= FINAL_WALK_RADIUS_METERS
     );
     const transferCache = new Map();
     const getTransfer = (firstRoute, secondRoute) => {
@@ -477,17 +479,98 @@ app.get("/routes/plan", async (req, res) => {
     const routeToDestinationLeg = (route, boardFraction = route.origin_fraction) =>
       buildRouteLeg(route, boardFraction, route.destination_fraction);
     const itineraries = [];
+    const itineraryByKey = new Map();
+    const walkingDistanceToDestination = Math.round(distanceMeters(origin, destination));
+    const vehiclePenaltyMeters = 260;
+
+    const buildWalkSegments = ({ originWalk = 0, transferWalks = [], finalWalk = 0 }) =>
+      [
+        originWalk > 0
+          ? {
+              type: "boarding",
+              label: "Camina hasta donde pasa la primera linea",
+              distance_meters: Math.round(originWalk),
+            }
+          : null,
+        ...transferWalks.map((distance, index) => ({
+          type: "transfer",
+          label: `Camina al punto para tomar la siguiente linea ${index + 1}`,
+          distance_meters: Math.round(distance),
+        })),
+        finalWalk > 0
+          ? {
+              type: "final",
+              label: "Camina desde la ultima parada hasta el destino",
+              distance_meters: Math.round(finalWalk),
+            }
+          : null,
+      ].filter(Boolean);
+
+    const addItinerary = (itinerary) => {
+      const key = itinerary.route_ids.length > 0 ? itinerary.route_ids.join(">") : "walk";
+      const current = itineraryByKey.get(key);
+
+      if (!current || itinerary.score_meters < current.score_meters) {
+        itineraryByKey.set(key, {
+          ...itinerary,
+          score_meters: Math.round(itinerary.score_meters),
+        });
+      }
+    };
+
+    if (walkingDistanceToDestination <= WALK_ONLY_RADIUS_METERS) {
+      addItinerary({
+        type: "walk",
+        vehicle_count: 0,
+        route_ids: [],
+        title: "Camina al destino",
+        legs: [],
+        transfers: [],
+        walk_segments: buildWalkSegments({ finalWalk: walkingDistanceToDestination }),
+        destination_distance_meters: 0,
+        score_meters: walkingDistanceToDestination,
+      });
+    }
 
     for (const route of direct) {
-      itineraries.push({
+      addItinerary({
         type: "direct",
         vehicle_count: 1,
         route_ids: [route.id],
         title: `Toma ${route.linea_display}`,
         legs: [routeToDestinationLeg(route)],
         transfers: [],
+        walk_segments: buildWalkSegments({
+          originWalk: route.origin_distance_meters,
+          finalWalk: route.destination_distance_meters,
+        }),
         destination_distance_meters: route.destination_distance_meters,
-        score_meters: route.origin_distance_meters + route.destination_distance_meters,
+        score_meters: route.origin_distance_meters + route.destination_distance_meters + vehiclePenaltyMeters,
+      });
+    }
+
+    for (const route of originRoutes) {
+      if (route.destination_distance_meters <= DIRECT_DESTINATION_RADIUS_METERS) {
+        continue;
+      }
+
+      if (route.destination_distance_meters > FINAL_WALK_RADIUS_METERS) {
+        continue;
+      }
+
+      addItinerary({
+        type: "ride_walk",
+        vehicle_count: 1,
+        route_ids: [route.id],
+        title: `Toma ${route.linea_display} y camina al destino`,
+        legs: [routeToDestinationLeg(route)],
+        transfers: [],
+        walk_segments: buildWalkSegments({
+          originWalk: route.origin_distance_meters,
+          finalWalk: route.destination_distance_meters,
+        }),
+        destination_distance_meters: route.destination_distance_meters,
+        score_meters: route.origin_distance_meters + route.destination_distance_meters + vehiclePenaltyMeters,
       });
     }
 
@@ -503,7 +586,7 @@ app.get("/routes/plan", async (req, res) => {
           continue;
         }
 
-        itineraries.push({
+        addItinerary({
           type: "multi",
           vehicle_count: 2,
           route_ids: [firstRoute.id, secondRoute.id],
@@ -513,8 +596,17 @@ app.get("/routes/plan", async (req, res) => {
             routeToDestinationLeg(secondRoute, transfer.to_fraction),
           ],
           transfers: [transfer],
+          walk_segments: buildWalkSegments({
+            originWalk: firstRoute.origin_distance_meters,
+            transferWalks: [transfer.distance_meters],
+            finalWalk: secondRoute.destination_distance_meters,
+          }),
           destination_distance_meters: secondRoute.destination_distance_meters,
-          score_meters: firstRoute.origin_distance_meters + transfer.distance_meters + secondRoute.destination_distance_meters,
+          score_meters:
+            firstRoute.origin_distance_meters +
+            transfer.distance_meters +
+            secondRoute.destination_distance_meters +
+            vehiclePenaltyMeters * 2,
         });
       }
     }
@@ -555,7 +647,7 @@ app.get("/routes/plan", async (req, res) => {
             continue;
           }
 
-          itineraries.push({
+          addItinerary({
             type: "multi",
             vehicle_count: 3,
             route_ids: [firstRoute.id, middleRoute.id, finalRoute.id],
@@ -566,19 +658,27 @@ app.get("/routes/plan", async (req, res) => {
               routeToDestinationLeg(finalRoute, secondTransfer.to_fraction),
             ],
             transfers: [firstTransfer, secondTransfer],
+            walk_segments: buildWalkSegments({
+              originWalk: firstRoute.origin_distance_meters,
+              transferWalks: [firstTransfer.distance_meters, secondTransfer.distance_meters],
+              finalWalk: finalRoute.destination_distance_meters,
+            }),
             destination_distance_meters: finalRoute.destination_distance_meters,
             score_meters:
               firstRoute.origin_distance_meters +
               firstTransfer.distance_meters +
               secondTransfer.distance_meters +
-              finalRoute.destination_distance_meters,
+              finalRoute.destination_distance_meters +
+              vehiclePenaltyMeters * 3,
           });
         }
       }
     }
 
+    itineraries.push(...itineraryByKey.values());
+
     const itineraryRows = itineraries
-      .sort((first, second) => first.vehicle_count - second.vehicle_count || first.score_meters - second.score_meters)
+      .sort((first, second) => first.score_meters - second.score_meters || first.vehicle_count - second.vehicle_count)
       .slice(0, 8);
 
     res.json({
@@ -586,6 +686,8 @@ app.get("/routes/plan", async (req, res) => {
       transfers: transferRows,
       itineraries: itineraryRows,
       direct_destination_radius_meters: DIRECT_DESTINATION_RADIUS_METERS,
+      walk_only_radius_meters: WALK_ONLY_RADIUS_METERS,
+      final_walk_radius_meters: FINAL_WALK_RADIUS_METERS,
       route_access_radius_meters: ROUTE_ACCESS_RADIUS_METERS,
       transfer_warning_radius_meters: TRANSFER_WARNING_RADIUS_METERS,
       transfer_search_radius_meters: TRANSFER_SEARCH_RADIUS_METERS,

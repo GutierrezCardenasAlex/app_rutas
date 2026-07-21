@@ -176,6 +176,23 @@ function HomePage() {
     if (routePlan.itineraries?.length > 0) {
       return routePlan.itineraries.map((itinerary) => {
         const routeNames = itinerary.legs.map((leg) => leg.linea_display).join(" -> ");
+        const totalWalkMeters = (itinerary.walk_segments || []).reduce(
+          (total, segment) => total + Number(segment.distance_meters || 0),
+          0
+        );
+
+        if (itinerary.vehicle_count === 0) {
+          return {
+            type: "walk",
+            title: "Camina al destino",
+            routeIds: [],
+            vehicleCount: 0,
+            transferPoints: [],
+            description: "Estas cerca del destino marcado. No hace falta tomar micro para este recorrido.",
+            details: `Caminata aproximada: ${totalWalkMeters} m.`,
+          };
+        }
+
         const steps = itinerary.legs.map((leg, index) => {
           const boardFallback = index === 0 ? "tu ubicacion" : "el punto de cambio";
           const alightFallback = index === itinerary.legs.length - 1 ? "el destino marcado" : "el siguiente cambio";
@@ -190,17 +207,32 @@ function HomePage() {
             return `Cambio ${index + 1}: ${transfer.is_close ? "cercano" : "con caminata"} (${transfer.distance_meters} m) cerca de ${lat.toFixed(5)}, ${lng.toFixed(5)}.`;
           })
           .join(" ");
+        const finalWalk = itinerary.walk_segments?.find((segment) => segment.type === "final");
+        const walkDetail = itinerary.walk_segments?.length
+          ? itinerary.walk_segments
+              .map((segment) => `${segment.label}: ${segment.distance_meters} m.`)
+              .join(" ")
+          : "";
+        const finalInstruction =
+          finalWalk && finalWalk.distance_meters > 0
+            ? ` Luego camina aprox. ${finalWalk.distance_meters} m hasta el destino.`
+            : "";
 
         return {
           type: itinerary.vehicle_count === 1 ? "direct" : "multi",
           title: itinerary.vehicle_count === 1 ? `Toma ${routeNames}` : `Lineas: ${routeNames}`,
           routeIds: itinerary.route_ids,
           vehicleCount: itinerary.vehicle_count,
+          totalWalkMeters,
+          transferPoints: itinerary.transfers.map((transfer) => [
+            transfer.point.coordinates[1],
+            transfer.point.coordinates[0],
+          ]),
           transferPoint: itinerary.transfers[0]
             ? [itinerary.transfers[0].point.coordinates[1], itinerary.transfers[0].point.coordinates[0]]
             : null,
-          description: steps.join(" "),
-          details: `${transferDetail ? `${transferDetail} ` : ""}La ultima linea te deja a ${itinerary.destination_distance_meters} m del destino.`,
+          description: `${steps.join(" ")}${finalInstruction}`,
+          details: `${transferDetail ? `${transferDetail} ` : ""}${walkDetail ? `${walkDetail} ` : ""}La ultima linea te deja a ${itinerary.destination_distance_meters} m del destino.`,
         };
       });
     }
@@ -225,6 +257,7 @@ function HomePage() {
           title: `Toma ${plan.first_linea_display} y luego ${plan.second_linea_display}`,
           routeIds: [plan.first_route_id, plan.second_route_id],
           vehicleCount: 2,
+          transferPoints: [[transferLat, transferLng]],
           transferPoint: [transferLat, transferLng],
           description: `Primero toma ${plan.first_linea_operativa} (${plan.first_sentido}) y baja cerca de ${firstStop}. Luego busca ${plan.second_linea_operativa} (${plan.second_sentido}) cerca de ${secondStop} y sigue hasta ${finalStop}.`,
           details: `${plan.transfer_is_close ? "Transbordo cercano" : "Transbordo con caminata"}: ${transferLat.toFixed(5)}, ${transferLng.toFixed(5)}. Las lineas se acercan a ${plan.transfer_distance_meters} m. La segunda linea te deja a ${plan.destination_distance_meters} m del destino.`,
@@ -291,9 +324,11 @@ function HomePage() {
           ) : null}
           {selectedRecommendation ? (
             <p className="trip-count">
-              {`Necesitas tomar ${selectedRecommendation.vehicleCount} ${
-                selectedRecommendation.vehicleCount === 1 ? "micro" : "micros"
-              }.`}
+              {selectedRecommendation.vehicleCount === 0
+                ? "Puedes llegar caminando."
+                : `Necesitas tomar ${selectedRecommendation.vehicleCount} ${
+                    selectedRecommendation.vehicleCount === 1 ? "micro" : "micros"
+                  }.`}
             </p>
           ) : null}
           {recommendations.length > 0 ? (
@@ -309,9 +344,13 @@ function HomePage() {
                     }}
                   >
                     <span>{recommendation.title}</span>
-                    <small>{`${recommendation.vehicleCount} ${
-                      recommendation.vehicleCount === 1 ? "micro" : "micros"
-                    }`}</small>
+                    <small>
+                      {recommendation.vehicleCount === 0
+                        ? "a pie"
+                        : `${recommendation.vehicleCount} ${
+                            recommendation.vehicleCount === 1 ? "micro" : "micros"
+                          }`}
+                    </small>
                   </button>
                   {index === selectedPlanIndex ? (
                     <div className="plan-detail">
@@ -374,6 +413,7 @@ function HomePage() {
           selectedRouteId={selectedRouteId}
           selectedRouteIds={selectedRecommendation?.routeIds || []}
           transferPoint={selectedRecommendation?.transferPoint}
+          transferPoints={selectedRecommendation?.transferPoints || []}
         />
       </div>
     </section>

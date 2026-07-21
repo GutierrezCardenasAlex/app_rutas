@@ -60,6 +60,7 @@ function RouteMap({
   center,
   destinationPoint,
   transferPoint,
+  transferPoints = [],
   onDestinationSelect,
   routes,
   selectedRouteId,
@@ -67,6 +68,7 @@ function RouteMap({
   height = "70vh",
 }) {
   const highlightedIds = new Set([selectedRouteId, ...selectedRouteIds].filter(Boolean));
+  const visibleTransferPoints = transferPoints.length > 0 ? transferPoints : transferPoint ? [transferPoint] : [];
 
   return (
     <MapContainer center={center || [-19.5836, -65.7531]} zoom={13} scrollWheelZoom className="map" style={{ height }}>
@@ -98,11 +100,11 @@ function RouteMap({
           }}
         />
       ) : null}
-      {transferPoint ? (
-        <Marker position={transferPoint} icon={transferIcon}>
-          <Popup>Punto aproximado para cambiar de micro</Popup>
+      {visibleTransferPoints.map((point, index) => (
+        <Marker key={`${point[0]}-${point[1]}-${index}`} position={point} icon={transferIcon}>
+          <Popup>{`Punto aproximado para cambiar de micro ${index + 1}`}</Popup>
         </Marker>
-      ) : null}
+      ))}
       {routes.map((route) => (
         <Polyline
           key={route.id}
