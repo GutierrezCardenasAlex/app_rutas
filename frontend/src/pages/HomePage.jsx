@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import RouteMap from "../components/RouteMap.jsx";
-import { fetchNearbyRoutes, fetchRoutePlan, fetchRoutes } from "../lib/api.js";
+import { fetchNearbyRoutes, fetchReferences, fetchRoutePlan, fetchRoutes } from "../lib/api.js";
 
 function pickReference(references, fraction, fallback) {
   if (!Array.isArray(references) || references.length === 0 || !Number.isFinite(Number(fraction))) {
@@ -24,12 +24,45 @@ function HomePage() {
   const [routePlan, setRoutePlan] = useState(null);
   const [planStatus, setPlanStatus] = useState("");
   const [selectedPlanIndex, setSelectedPlanIndex] = useState(0);
+  const [referenceSearch, setReferenceSearch] = useState("");
+  const [referenceResults, setReferenceResults] = useState([]);
+  const [selectedReferenceRouteIds, setSelectedReferenceRouteIds] = useState([]);
+  const [selectedReferencePoint, setSelectedReferencePoint] = useState(null);
 
   useEffect(() => {
     fetchRoutes()
       .then(setAllRoutes)
       .catch((apiError) => setError(apiError.message));
   }, []);
+
+  useEffect(() => {
+    const query = referenceSearch.trim();
+
+    if (query.length < 2) {
+      setReferenceResults([]);
+      return undefined;
+    }
+
+    let ignore = false;
+    const timeoutId = window.setTimeout(() => {
+      fetchReferences(query)
+        .then((items) => {
+          if (!ignore) {
+            setReferenceResults(items);
+          }
+        })
+        .catch((apiError) => {
+          if (!ignore) {
+            setError(apiError.message);
+          }
+        });
+    }, 250);
+
+    return () => {
+      ignore = true;
+      window.clearTimeout(timeoutId);
+    };
+  }, [referenceSearch]);
 
   useEffect(() => {
     if (typeof window !== "undefined" && !window.isSecureContext) {
@@ -89,6 +122,7 @@ function HomePage() {
         nombre: plan.first_nombre,
         descripcion: plan.first_descripcion,
         referencias: plan.first_referencias,
+        reference_points: [],
         geometry: plan.first_geometry,
       });
       routeMap.set(plan.second_route_id, {
@@ -99,6 +133,7 @@ function HomePage() {
         nombre: plan.second_nombre,
         descripcion: plan.second_descripcion,
         referencias: plan.second_referencias,
+        reference_points: [],
         geometry: plan.second_geometry,
       });
     });
@@ -113,13 +148,68 @@ function HomePage() {
           nombre: leg.nombre,
           descripcion: leg.descripcion,
           referencias: leg.referencias,
+          reference_points: leg.reference_points || [],
           geometry: leg.geometry,
         });
       });
     });
 
+    referenceResults.forEach((reference) => {
+      routeMap.set(reference.route_id, {
+        id: reference.route_id,
+        linea_display: reference.linea_display,
+        linea_operativa: reference.linea_operativa,
+        sentido: reference.sentido,
+        nombre: reference.route_nombre,
+        descripcion: reference.descripcion,
+        referencias: reference.referencias,
+        reference_points: [],
+        geometry: reference.geometry,
+      });
+    });
+
     return Array.from(routeMap.values());
-  }, [allRoutes, nearbyRoutes, routePlan]);
+  }, [allRoutes, referenceResults, routePlan]);
+
+  const groupedReferenceResults = useMemo(() => {
+    const groups = new Map();
+
+    referenceResults.forEach((reference) => {
+      const key = `${reference.nombre}-${Number(reference.lat).toFixed(6)}-${Number(reference.lng).toFixed(6)}`;
+      const current = groups.get(key) || {
+        nombre: reference.nombre,
+        lat: Number(reference.lat),
+        lng: Number(reference.lng),
+        routes: [],
+      };
+
+      current.routes.push(reference);
+      groups.set(key, current);
+    });
+
+    return Array.from(groups.values()).slice(0, 8);
+  }, [referenceResults]);
+
+  const mapReferencePoints = useMemo(() => {
+    const points = [];
+
+    routesToDisplay.forEach((route) => {
+      (route.reference_points || []).forEach((point) => {
+        points.push({
+          ...point,
+          route_id: route.id,
+          linea_display: route.linea_display,
+          linea_operativa: route.linea_operativa,
+        });
+      });
+    });
+
+    if (selectedReferencePoint) {
+      points.push(selectedReferencePoint);
+    }
+
+    return points;
+  }, [routesToDisplay, selectedReferencePoint]);
 
   useEffect(() => {
     if (!position || !destinationPoint) {
@@ -196,8 +286,12 @@ function HomePage() {
         const steps = itinerary.legs.map((leg, index) => {
           const boardFallback = index === 0 ? "tu ubicacion" : "el punto de cambio";
           const alightFallback = index === itinerary.legs.length - 1 ? "el destino marcado" : "el siguiente cambio";
-          const boardAt = pickReference(leg.referencias, leg.board_fraction, boardFallback);
-          const alightAt = pickReference(leg.referencias, leg.alight_fraction, alightFallback);
+          const legReferences =
+            leg.referencias?.length > 0
+              ? leg.referencias
+              : (leg.reference_points || []).map((point) => point.nombre);
+          const boardAt = pickReference(legReferences, leg.board_fraction, boardFallback);
+          const alightAt = pickReference(legReferences, leg.alight_fraction, alightFallback);
 
           return `${index + 1}. Toma ${leg.linea_operativa} (${leg.sentido}) cerca de ${boardAt} y baja cerca de ${alightAt}.`;
         });
@@ -270,6 +364,8 @@ function HomePage() {
 
   const handleDestinationSelect = (point) => {
     setDestinationPoint(point);
+    setSelectedReferencePoint(null);
+    setSelectedReferenceRouteIds([]);
     setStatus("Destino marcado en el mapa");
   };
 
@@ -277,6 +373,8 @@ function HomePage() {
     setDestinationPoint(null);
     setRoutePlan(null);
     setPlanStatus("");
+    setSelectedReferencePoint(null);
+    setSelectedReferenceRouteIds([]);
   };
 
   const destinationSummary = destinationPoint
@@ -299,6 +397,52 @@ function HomePage() {
             onChange={(event) => setDestination(event.target.value)}
           />
         </label>
+
+        <label className="field">
+          <span>Buscar punto de referencia</span>
+          <input
+            type="text"
+            placeholder="Ej. mercado Chuquimia, Coliseo La Plata..."
+            value={referenceSearch}
+            onChange={(event) => setReferenceSearch(event.target.value)}
+          />
+        </label>
+
+        {groupedReferenceResults.length > 0 ? (
+          <div className="card">
+            <h3>Sugerencias</h3>
+            <ul className="route-list">
+              {groupedReferenceResults.map((reference) => {
+                const routeIds = reference.routes.map((route) => route.route_id);
+                const lineNames = reference.routes
+                  .map((route) => `${route.linea_display} (${route.linea_operativa})`)
+                  .join(", ");
+
+                return (
+                  <li key={`${reference.nombre}-${reference.lat}-${reference.lng}`}>
+                    <button
+                      type="button"
+                      className="route-button"
+                      onClick={() => {
+                        setSelectedReferenceRouteIds(routeIds);
+                        setSelectedRouteId(routeIds[0]);
+                        setSelectedReferencePoint(reference);
+                        setDestinationPoint([reference.lat, reference.lng]);
+                        setStatus(`Referencia seleccionada: ${reference.nombre}`);
+                      }}
+                    >
+                      <span>{reference.nombre}</span>
+                      <small>{`${reference.routes.length} linea(s)`}</small>
+                    </button>
+                    <div className="plan-detail">
+                      <p className="muted">{`Por aqui pasa: ${lineNames}.`}</p>
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+        ) : null}
 
         <div className="card destination-card">
           <h3>Destino en mapa</h3>
@@ -411,9 +555,10 @@ function HomePage() {
           onDestinationSelect={handleDestinationSelect}
           routes={routesToDisplay}
           selectedRouteId={selectedRouteId}
-          selectedRouteIds={selectedRecommendation?.routeIds || []}
+          selectedRouteIds={[...(selectedRecommendation?.routeIds || []), ...selectedReferenceRouteIds]}
           transferPoint={selectedRecommendation?.transferPoint}
           transferPoints={selectedRecommendation?.transferPoints || []}
+          referencePoints={mapReferencePoints}
         />
       </div>
     </section>

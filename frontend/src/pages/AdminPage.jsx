@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { MapContainer, Polyline, Popup, TileLayer } from "react-leaflet";
+import { MapContainer, Marker, Polyline, Popup, TileLayer, useMapEvents } from "react-leaflet";
 import AdminDrawControl from "../components/AdminDrawControl.jsx";
 import {
   clearAdminPassword,
@@ -30,6 +30,30 @@ function geometryToLatLngs(geometry) {
   return geometry.coordinates.map(([lng, lat]) => [lat, lng]);
 }
 
+function ReferencePointPicker({ enabled, onAddPoint }) {
+  useMapEvents({
+    click(event) {
+      if (!enabled) {
+        return;
+      }
+
+      const nombre = window.prompt("Nombre del punto de referencia. Ej. Mercado Chuquimia");
+
+      if (!nombre?.trim()) {
+        return;
+      }
+
+      onAddPoint({
+        nombre: nombre.trim(),
+        lat: event.latlng.lat,
+        lng: event.latlng.lng,
+      });
+    },
+  });
+
+  return null;
+}
+
 function AdminPage() {
   const [form, setForm] = useState(emptyForm);
   const [draftGeoJson, setDraftGeoJson] = useState(null);
@@ -43,6 +67,8 @@ function AdminPage() {
   const [mapEnabled, setMapEnabled] = useState(false);
   const [mapError, setMapError] = useState("");
   const [selectedRouteId, setSelectedRouteId] = useState(null);
+  const [referencePoints, setReferencePoints] = useState([]);
+  const [isAddingReferencePoint, setIsAddingReferencePoint] = useState(false);
 
   useEffect(() => {
     fetchRoutes()
@@ -75,6 +101,8 @@ function AdminPage() {
   const resetForm = () => {
     setForm(emptyForm);
     setDraftGeoJson(null);
+    setReferencePoints([]);
+    setIsAddingReferencePoint(false);
     setEditingRouteId(null);
     setClearSignal((current) => current + 1);
     setSelectedRouteId(routes[0]?.id ?? null);
@@ -108,6 +136,7 @@ function AdminPage() {
       const payload = {
         ...form,
         geojson: draftGeoJson,
+        referencePoints,
       };
 
       if (editingRouteId) {
@@ -162,6 +191,7 @@ function AdminPage() {
       referencias: Array.isArray(route.referencias) ? route.referencias.join(", ") : "",
     });
     setDraftGeoJson(route.geometry);
+    setReferencePoints(route.reference_points || []);
     setSelectedRouteId(route.id);
     setMessage(`Editando la ruta ${route.linea_display} (${route.linea_operativa}). Puedes mover sus puntos en el mapa.`);
   };
@@ -186,6 +216,7 @@ function AdminPage() {
     () => routes.find((route) => route.id === highlightedRouteId) || null,
     [highlightedRouteId, routes]
   );
+  const highlightedReferencePoints = referencePoints.length > 0 ? referencePoints : routeSummary?.reference_points || [];
 
   if (!isAuthenticated) {
     return (
@@ -293,6 +324,40 @@ function AdminPage() {
             />
           </label>
 
+          <div className="card reference-editor">
+            <h3>Puntos marcados en mapa</h3>
+            <p className="muted">
+              Activa el modo y haz clic en el mapa para marcar lugares como mercado Chuquimia, Coliseo La Plata o una calle importante.
+            </p>
+            <button
+              className={isAddingReferencePoint ? "primary-button" : "secondary-button"}
+              type="button"
+              onClick={() => setIsAddingReferencePoint((current) => !current)}
+            >
+              {isAddingReferencePoint ? "Modo marcar punto activo" : "Agregar punto de referencia"}
+            </button>
+            {referencePoints.length > 0 ? (
+              <ul className="reference-point-list">
+                {referencePoints.map((point, index) => (
+                  <li key={`${point.nombre}-${point.lat}-${point.lng}`}>
+                    <span>{`${index + 1}. ${point.nombre}`}</span>
+                    <button
+                      className="small-button danger"
+                      type="button"
+                      onClick={() =>
+                        setReferencePoints((current) => current.filter((_, pointIndex) => pointIndex !== index))
+                      }
+                    >
+                      Quitar
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="muted">Aun no hay puntos marcados para esta ruta.</p>
+            )}
+          </div>
+
           <button className="primary-button" type="submit">
             {editingRouteId ? "Guardar cambios" : "Guardar ruta"}
           </button>
@@ -333,6 +398,9 @@ function AdminPage() {
                 </div>
                 <small>{route.nombre}</small>
                 {route.referencias?.length ? <small>{route.referencias.join(" · ")}</small> : null}
+                {route.reference_points?.length ? (
+                  <small>{`Puntos: ${route.reference_points.map((point) => point.nombre).join(" · ")}`}</small>
+                ) : null}
                 <div className="route-actions">
                   <button className="small-button" type="button" onClick={() => setSelectedRouteId(route.id)}>
                     Ver
@@ -378,6 +446,22 @@ function AdminPage() {
               </Popup>
             </Polyline>
           ))}
+          {highlightedReferencePoints.map((point, index) => (
+            <Marker key={`${point.nombre}-${point.lat}-${point.lng}-${index}`} position={[point.lat, point.lng]}>
+              <Popup>
+                <strong>{point.nombre}</strong>
+                <br />
+                {routeSummary ? `${routeSummary.linea_display} · ${routeSummary.linea_operativa}` : "Punto de referencia"}
+              </Popup>
+            </Marker>
+          ))}
+          <ReferencePointPicker
+            enabled={isAddingReferencePoint}
+            onAddPoint={(point) => {
+              setReferencePoints((current) => [...current, point]);
+              setMessage(`Punto agregado: ${point.nombre}.`);
+            }}
+          />
           <AdminDrawControl
             onGeometryChange={handleGeometryChange}
             onDeleted={handleDeleted}

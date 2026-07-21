@@ -88,6 +88,11 @@ export function fetchRoutePlan(originLat, originLng, destLat, destLng) {
   );
 }
 
+export function fetchReferences(query = "") {
+  const params = query ? `?q=${encodeURIComponent(query)}` : "";
+  return request(`/references${params}`);
+}
+
 export function createRoute(payload) {
   return request("/admin/routes", {
     method: "POST",

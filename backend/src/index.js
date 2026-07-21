@@ -122,6 +122,7 @@ function buildRouteLeg(route, boardFraction, alightFraction) {
     nombre: route.nombre,
     descripcion: route.descripcion,
     referencias: route.referencias,
+    reference_points: route.reference_points || [],
     geometry: route.geometry,
     board_fraction: boardFraction,
     alight_fraction: alightFraction,
@@ -156,6 +157,34 @@ function normalizeReferences(value) {
   return [];
 }
 
+function normalizeReferencePoints(value) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .map((item) => ({
+      nombre: String(item?.nombre || "").trim(),
+      lat: Number(item?.lat),
+      lng: Number(item?.lng),
+    }))
+    .filter((item) => item.nombre && Number.isFinite(item.lat) && Number.isFinite(item.lng));
+}
+
+async function saveReferencePoints(client, routeId, referencePoints) {
+  await client.query("DELETE FROM ruta_referencias WHERE ruta_id = $1", [routeId]);
+
+  for (const point of referencePoints) {
+    await client.query(
+      `
+        INSERT INTO ruta_referencias (ruta_id, nombre, geom)
+        VALUES ($1, $2, ST_SetSRID(ST_MakePoint($3, $4), 4326))
+      `,
+      [routeId, point.nombre, point.lng, point.lat]
+    );
+  }
+}
+
 async function ensureSchema() {
   await pool.query(`
     CREATE EXTENSION IF NOT EXISTS postgis;
@@ -180,6 +209,22 @@ async function ensureSchema() {
     CREATE INDEX IF NOT EXISTS rutas_geometria_geom_idx
       ON rutas_geometria
       USING GIST (geom);
+
+    CREATE TABLE IF NOT EXISTS ruta_referencias (
+      id SERIAL PRIMARY KEY,
+      ruta_id INTEGER NOT NULL REFERENCES rutas(id) ON DELETE CASCADE,
+      nombre TEXT NOT NULL,
+      geom GEOMETRY(POINT, 4326) NOT NULL,
+      created_at TIMESTAMP DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS ruta_referencias_geom_idx
+      ON ruta_referencias
+      USING GIST (geom);
+
+    CREATE INDEX IF NOT EXISTS ruta_referencias_nombre_idx
+      ON ruta_referencias
+      USING BTREE (LOWER(nombre));
   `);
 
   await pool.query(`
@@ -263,6 +308,22 @@ app.get("/routes", async (_req, res) => {
           r.nombre,
           r.descripcion,
           COALESCE(r.referencias, '{}') AS referencias,
+          COALESCE(
+            (
+              SELECT json_agg(
+                json_build_object(
+                  'id', rr.id,
+                  'nombre', rr.nombre,
+                  'lat', ST_Y(rr.geom),
+                  'lng', ST_X(rr.geom)
+                )
+                ORDER BY rr.id ASC
+              )
+              FROM ruta_referencias rr
+              WHERE rr.ruta_id = r.id
+            ),
+            '[]'::json
+          ) AS reference_points,
           ST_AsGeoJSON(rg.geom)::json AS geometry
         FROM rutas r
         JOIN rutas_geometria rg ON rg.ruta_id = r.id
@@ -296,6 +357,22 @@ app.get("/routes/near", async (req, res) => {
           r.nombre,
           r.descripcion,
           COALESCE(r.referencias, '{}') AS referencias,
+          COALESCE(
+            (
+              SELECT json_agg(
+                json_build_object(
+                  'id', rr.id,
+                  'nombre', rr.nombre,
+                  'lat', ST_Y(rr.geom),
+                  'lng', ST_X(rr.geom)
+                )
+                ORDER BY rr.id ASC
+              )
+              FROM ruta_referencias rr
+              WHERE rr.ruta_id = r.id
+            ),
+            '[]'::json
+          ) AS reference_points,
           ROUND(
             ST_Distance(
               rg.geom::geography,
@@ -318,6 +395,48 @@ app.get("/routes/near", async (req, res) => {
     res.json(rows);
   } catch (error) {
     res.status(500).json({ error: "No se pudieron obtener las rutas cercanas.", details: error.message });
+  }
+});
+
+app.get("/references", async (req, res) => {
+  const query = String(req.query.q || "").trim();
+
+  try {
+    const params = [];
+    const whereClause = query ? "WHERE LOWER(rr.nombre) LIKE LOWER($1)" : "";
+
+    if (query) {
+      params.push(`%${query}%`);
+    }
+
+    const { rows } = await pool.query(
+      `
+        SELECT
+          rr.id,
+          rr.nombre,
+          ST_Y(rr.geom) AS lat,
+          ST_X(rr.geom) AS lng,
+          r.id AS route_id,
+          r.linea_display,
+          r.linea_operativa,
+          r.sentido,
+          r.nombre AS route_nombre,
+          r.descripcion,
+          COALESCE(r.referencias, '{}') AS referencias,
+          ST_AsGeoJSON(rg.geom)::json AS geometry
+        FROM ruta_referencias rr
+        JOIN rutas r ON r.id = rr.ruta_id
+        JOIN rutas_geometria rg ON rg.ruta_id = r.id
+        ${whereClause}
+        ORDER BY LOWER(rr.nombre), r.linea_display, r.linea_operativa
+        LIMIT 80
+      `,
+      params
+    );
+
+    res.json(rows);
+  } catch (error) {
+    res.status(500).json({ error: "No se pudieron buscar referencias.", details: error.message });
   }
 });
 
@@ -352,6 +471,22 @@ app.get("/routes/plan", async (req, res) => {
           r.nombre,
           r.descripcion,
           COALESCE(r.referencias, '{}') AS referencias,
+          COALESCE(
+            (
+              SELECT json_agg(
+                json_build_object(
+                  'id', rr.id,
+                  'nombre', rr.nombre,
+                  'lat', ST_Y(rr.geom),
+                  'lng', ST_X(rr.geom)
+                )
+                ORDER BY rr.id ASC
+              )
+              FROM ruta_referencias rr
+              WHERE rr.ruta_id = r.id
+            ),
+            '[]'::json
+          ) AS reference_points,
           ST_AsGeoJSON(rg.geom)::json AS geometry
         FROM rutas r
         JOIN rutas_geometria rg ON rg.ruta_id = r.id
@@ -719,8 +854,9 @@ app.get("/admin/session", requireAdminAuth, (_req, res) => {
 });
 
 app.post("/admin/routes", requireAdminAuth, async (req, res) => {
-  const { lineaDisplay, lineaOperativa, sentido, nombre, descripcion = "", referencias = [], geojson } = req.body;
+  const { lineaDisplay, lineaOperativa, sentido, nombre, descripcion = "", referencias = [], referencePoints = [], geojson } = req.body;
   const normalizedReferences = normalizeReferences(referencias);
+  const normalizedReferencePoints = normalizeReferencePoints(referencePoints);
 
   if (!lineaDisplay || !lineaOperativa || !sentido || !nombre || !geojson) {
     return res.status(400).json({
@@ -758,6 +894,8 @@ app.post("/admin/routes", requireAdminAuth, async (req, res) => {
       [routeResult.rows[0].id, JSON.stringify(geojson)]
     );
 
+    await saveReferencePoints(client, routeResult.rows[0].id, normalizedReferencePoints);
+
     await client.query("COMMIT");
     res.status(201).json(routeResult.rows[0]);
   } catch (error) {
@@ -770,8 +908,9 @@ app.post("/admin/routes", requireAdminAuth, async (req, res) => {
 
 app.put("/admin/routes/:id", requireAdminAuth, async (req, res) => {
   const routeId = Number(req.params.id);
-  const { lineaDisplay, lineaOperativa, sentido, nombre, descripcion = "", referencias = [], geojson } = req.body;
+  const { lineaDisplay, lineaOperativa, sentido, nombre, descripcion = "", referencias = [], referencePoints = [], geojson } = req.body;
   const normalizedReferences = normalizeReferences(referencias);
+  const normalizedReferencePoints = normalizeReferencePoints(referencePoints);
 
   if (!Number.isInteger(routeId)) {
     return res.status(400).json({ error: "El id de la ruta es invalido." });
@@ -825,6 +964,8 @@ app.put("/admin/routes/:id", requireAdminAuth, async (req, res) => {
       `,
       [JSON.stringify(geojson), routeId]
     );
+
+    await saveReferencePoints(client, routeId, normalizedReferencePoints);
 
     await client.query("COMMIT");
     res.json(routeResult.rows[0]);

@@ -24,6 +24,13 @@ const transferIcon = new L.Icon({
   className: "transfer-marker",
 });
 
+const referenceIcon = new L.Icon({
+  iconUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png",
+  shadowUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png",
+  iconAnchor: [12, 41],
+  className: "reference-marker",
+});
+
 function RecenterMap({ center }) {
   const map = useMap();
 
@@ -65,6 +72,7 @@ function RouteMap({
   routes,
   selectedRouteId,
   selectedRouteIds = [],
+  referencePoints = [],
   height = "70vh",
 }) {
   const highlightedIds = new Set([selectedRouteId, ...selectedRouteIds].filter(Boolean));
@@ -105,6 +113,19 @@ function RouteMap({
           <Popup>{`Punto aproximado para cambiar de micro ${index + 1}`}</Popup>
         </Marker>
       ))}
+      {referencePoints.map((point, index) => (
+        <Marker key={`${point.nombre}-${point.lat}-${point.lng}-${index}`} position={[point.lat, point.lng]} icon={referenceIcon}>
+          <Popup>
+            <strong>{point.nombre}</strong>
+            {point.linea_display ? (
+              <>
+                <br />
+                {`Por aqui pasa ${point.linea_display} (${point.linea_operativa})`}
+              </>
+            ) : null}
+          </Popup>
+        </Marker>
+      ))}
       {routes.map((route) => (
         <Polyline
           key={route.id}
@@ -126,6 +147,12 @@ function RouteMap({
               <>
                 <br />
                 {route.referencias.join(" · ")}
+              </>
+            ) : null}
+            {route.reference_points?.length ? (
+              <>
+                <br />
+                {`Puntos: ${route.reference_points.map((point) => point.nombre).join(" · ")}`}
               </>
             ) : null}
           </Popup>
