@@ -11,7 +11,7 @@ const FINAL_WALK_RADIUS_METERS = 900;
 const SINGLE_ROUTE_PREFERRED_FINAL_WALK_METERS = DIRECT_DESTINATION_RADIUS_METERS;
 const ROUTE_ACCESS_RADIUS_METERS = 900;
 const TRANSFER_WARNING_RADIUS_METERS = 650;
-const TRANSFER_SEARCH_RADIUS_METERS = 1200;
+const TRANSFER_SEARCH_RADIUS_METERS = 1800;
 const MAX_ITINERARY_VEHICLES = 3;
 const WALK_SCORE_WEIGHT = 1.25;
 const RIDE_SCORE_WEIGHT = 0.35;
@@ -96,6 +96,10 @@ function routeLegDistanceMeters(route, boardFraction, alightFraction) {
 }
 
 function canTravelRoute(route, boardFraction, alightFraction) {
+  if (process.env.ENFORCE_ROUTE_DIRECTION !== "true") {
+    return true;
+  }
+
   if (route.sentido === "ambos") {
     return true;
   }
@@ -881,6 +885,7 @@ app.get("/routes/plan", async (req, res) => {
           addItinerary({
             type: "multi",
             vehicle_count: 2,
+            strategy: "nearby_first_then_destination",
             route_ids: [firstRoute.id, secondRoute.id],
             title: `Toma ${firstRoute.linea_display} y luego ${secondRoute.linea_display}`,
             legs: [
@@ -984,10 +989,26 @@ app.get("/routes/plan", async (req, res) => {
 
     itineraries.push(...itineraryByKey.values());
 
+    const rankItinerary = (itinerary) => {
+      if (itinerary.type === "direct" || itinerary.type === "walk") {
+        return 0;
+      }
+
+      if (itinerary.vehicle_count === 2) {
+        return 1;
+      }
+
+      if (itinerary.vehicle_count === 3) {
+        return 2;
+      }
+
+      return 3;
+    };
+
     const itineraryRows = preferredSimpleItinerary
       ? [preferredSimpleItinerary]
       : itineraries
-          .sort((first, second) => first.score_meters - second.score_meters || first.vehicle_count - second.vehicle_count)
+          .sort((first, second) => rankItinerary(first) - rankItinerary(second) || first.score_meters - second.score_meters)
           .slice(0, 8);
 
     res.json({
