@@ -8,7 +8,106 @@ const adminPassword = process.env.ADMIN_PASSWORD || "admin123";
 const DIRECT_DESTINATION_RADIUS_METERS = 300;
 const ROUTE_ACCESS_RADIUS_METERS = 900;
 const TRANSFER_WARNING_RADIUS_METERS = 650;
-const TRANSFER_SEARCH_RADIUS_METERS = 1500;
+const TRANSFER_SEARCH_RADIUS_METERS = 1800;
+
+function toRadians(value) {
+  return (value * Math.PI) / 180;
+}
+
+function distanceMeters(a, b) {
+  const earthRadius = 6371000;
+  const lat1 = toRadians(a.lat);
+  const lat2 = toRadians(b.lat);
+  const deltaLat = toRadians(b.lat - a.lat);
+  const deltaLng = toRadians(b.lng - a.lng);
+  const h =
+    Math.sin(deltaLat / 2) * Math.sin(deltaLat / 2) +
+    Math.cos(lat1) * Math.cos(lat2) * Math.sin(deltaLng / 2) * Math.sin(deltaLng / 2);
+
+  return 2 * earthRadius * Math.atan2(Math.sqrt(h), Math.sqrt(1 - h));
+}
+
+function projectPointOnSegment(point, start, end) {
+  const referenceLat = toRadians((point.lat + start.lat + end.lat) / 3);
+  const scale = Math.cos(referenceLat);
+  const px = point.lng * scale;
+  const py = point.lat;
+  const ax = start.lng * scale;
+  const ay = start.lat;
+  const bx = end.lng * scale;
+  const by = end.lat;
+  const dx = bx - ax;
+  const dy = by - ay;
+  const lengthSquared = dx * dx + dy * dy;
+  const t = lengthSquared === 0 ? 0 : Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / lengthSquared));
+
+  return {
+    lat: start.lat + (end.lat - start.lat) * t,
+    lng: start.lng + (end.lng - start.lng) * t,
+    t,
+  };
+}
+
+function nearestPointOnRoute(route, point) {
+  const coordinates = route.geometry?.coordinates || [];
+  let best = null;
+
+  for (let index = 0; index < coordinates.length - 1; index += 1) {
+    const start = { lng: coordinates[index][0], lat: coordinates[index][1] };
+    const end = { lng: coordinates[index + 1][0], lat: coordinates[index + 1][1] };
+    const projected = projectPointOnSegment(point, start, end);
+    const distance = distanceMeters(point, projected);
+    const fraction = coordinates.length <= 2 ? projected.t : (index + projected.t) / (coordinates.length - 1);
+
+    if (!best || distance < best.distance_meters) {
+      best = {
+        point: projected,
+        fraction,
+        distance_meters: Math.round(distance),
+      };
+    }
+  }
+
+  return best || { point, fraction: 0, distance_meters: Number.POSITIVE_INFINITY };
+}
+
+function nearestRoutesPoint(firstRoute, secondRoute) {
+  const firstCoordinates = firstRoute.geometry?.coordinates || [];
+  const secondCoordinates = secondRoute.geometry?.coordinates || [];
+  let best = null;
+
+  for (const coordinate of firstCoordinates) {
+    const firstPoint = { lng: coordinate[0], lat: coordinate[1] };
+    const nearestOnSecond = nearestPointOnRoute(secondRoute, firstPoint);
+
+    if (!best || nearestOnSecond.distance_meters < best.distance_meters) {
+      best = {
+        first_point: firstPoint,
+        second_point: nearestOnSecond.point,
+        distance_meters: nearestOnSecond.distance_meters,
+      };
+    }
+  }
+
+  for (const coordinate of secondCoordinates) {
+    const secondPoint = { lng: coordinate[0], lat: coordinate[1] };
+    const nearestOnFirst = nearestPointOnRoute(firstRoute, secondPoint);
+
+    if (!best || nearestOnFirst.distance_meters < best.distance_meters) {
+      best = {
+        first_point: nearestOnFirst.point,
+        second_point: secondPoint,
+        distance_meters: nearestOnFirst.distance_meters,
+      };
+    }
+  }
+
+  return best || {
+    first_point: { lat: 0, lng: 0 },
+    second_point: { lat: 0, lng: 0 },
+    distance_meters: Number.POSITIVE_INFINITY,
+  };
+}
 
 app.use(cors());
 app.use(express.json({ limit: "2mb" }));
@@ -222,15 +321,11 @@ app.get("/routes/plan", async (req, res) => {
   }
 
   try {
-    const directResult = await pool.query(
+    const origin = { lat: originLatitude, lng: originLongitude };
+    const destination = { lat: destinationLatitude, lng: destinationLongitude };
+    const { rows: routes } = await pool.query(
       `
-        WITH points AS (
-          SELECT
-          ST_SetSRID(ST_MakePoint($1, $2), 4326)::geography AS origin,
-          ST_SetSRID(ST_MakePoint($3, $4), 4326)::geography AS destination
-        )
         SELECT
-          'direct' AS type,
           r.id,
           r.linea_display,
           r.linea_operativa,
@@ -238,130 +333,115 @@ app.get("/routes/plan", async (req, res) => {
           r.nombre,
           r.descripcion,
           COALESCE(r.referencias, '{}') AS referencias,
-          ROUND(ST_Distance(rg.geom::geography, points.origin)) AS origin_distance_meters,
-          ROUND(ST_Distance(rg.geom::geography, points.destination)) AS destination_distance_meters,
-          ST_LineLocatePoint(rg.geom, ST_SetSRID(ST_MakePoint($1, $2), 4326)) AS origin_fraction,
-          ST_LineLocatePoint(rg.geom, ST_SetSRID(ST_MakePoint($3, $4), 4326)) AS destination_fraction,
           ST_AsGeoJSON(rg.geom)::json AS geometry
         FROM rutas r
         JOIN rutas_geometria rg ON rg.ruta_id = r.id
-        CROSS JOIN points
-        WHERE ST_DWithin(rg.geom::geography, points.origin, $5)
-          AND ST_DWithin(rg.geom::geography, points.destination, $6)
-        ORDER BY origin_distance_meters + destination_distance_meters ASC
-        LIMIT 3
-      `,
-      [
-        originLongitude,
-        originLatitude,
-        destinationLongitude,
-        destinationLatitude,
-        ROUTE_ACCESS_RADIUS_METERS,
-        DIRECT_DESTINATION_RADIUS_METERS,
-      ]
+      `
     );
 
-    const transferResult = await pool.query(
-      `
-        WITH points AS (
-          SELECT
-            ST_SetSRID(ST_MakePoint($1, $2), 4326)::geography AS origin,
-            ST_SetSRID(ST_MakePoint($3, $4), 4326)::geography AS destination
-        ),
-        origin_routes AS (
-          SELECT
-            r.id,
-            r.linea_display,
-            r.linea_operativa,
-            r.sentido,
-            r.nombre,
-            r.descripcion,
-            COALESCE(r.referencias, '{}') AS referencias,
-            rg.geom,
-            ROUND(ST_Distance(rg.geom::geography, points.origin)) AS origin_distance_meters
-          FROM rutas r
-          JOIN rutas_geometria rg ON rg.ruta_id = r.id
-          CROSS JOIN points
-          WHERE ST_DWithin(rg.geom::geography, points.origin, $5)
-        ),
-        destination_routes AS (
-          SELECT
-            r.id,
-            r.linea_display,
-            r.linea_operativa,
-            r.sentido,
-            r.nombre,
-            r.descripcion,
-            COALESCE(r.referencias, '{}') AS referencias,
-            rg.geom,
-            ROUND(ST_Distance(rg.geom::geography, points.destination)) AS destination_distance_meters
-          FROM rutas r
-          JOIN rutas_geometria rg ON rg.ruta_id = r.id
-          CROSS JOIN points
-        )
-        SELECT
-          'transfer' AS type,
-          o.id AS first_route_id,
-          o.linea_display AS first_linea_display,
-          o.linea_operativa AS first_linea_operativa,
-          o.sentido AS first_sentido,
-          o.nombre AS first_nombre,
-          o.descripcion AS first_descripcion,
-          o.referencias AS first_referencias,
-          o.origin_distance_meters,
-          ST_AsGeoJSON(o.geom)::json AS first_geometry,
-          d.id AS second_route_id,
-          d.linea_display AS second_linea_display,
-          d.linea_operativa AS second_linea_operativa,
-          d.sentido AS second_sentido,
-          d.nombre AS second_nombre,
-          d.descripcion AS second_descripcion,
-          d.referencias AS second_referencias,
-          d.destination_distance_meters,
-          ST_AsGeoJSON(d.geom)::json AS second_geometry,
-          ROUND(ST_Distance(o.geom::geography, d.geom::geography)) AS transfer_distance_meters,
-          ST_AsGeoJSON(ST_ClosestPoint(o.geom, d.geom))::json AS transfer_point,
-          ST_LineLocatePoint(o.geom, ST_ClosestPoint(o.geom, d.geom)) AS first_transfer_fraction,
-          ST_LineLocatePoint(d.geom, ST_ClosestPoint(d.geom, o.geom)) AS second_transfer_fraction,
-          ST_LineLocatePoint(d.geom, ST_SetSRID(ST_MakePoint($3, $4), 4326)) AS destination_fraction,
-          CASE
-            WHEN ST_Distance(o.geom::geography, d.geom::geography) <= $6 THEN true
-            ELSE false
-          END AS transfer_is_close,
-          ROUND(
-            o.origin_distance_meters +
-            d.destination_distance_meters +
-            ST_Distance(o.geom::geography, d.geom::geography)
-          ) AS score_meters
-        FROM origin_routes o
-        JOIN destination_routes d ON d.id <> o.id
-          AND d.linea_operativa <> o.linea_operativa
-          AND ST_DWithin(o.geom::geography, d.geom::geography, $7)
-        ORDER BY
-          score_meters ASC
-        LIMIT 5
-      `,
-      [
-        originLongitude,
-        originLatitude,
-        destinationLongitude,
-        destinationLatitude,
-        ROUTE_ACCESS_RADIUS_METERS,
-        TRANSFER_WARNING_RADIUS_METERS,
-        TRANSFER_SEARCH_RADIUS_METERS,
-      ]
-    );
+    const measuredRoutes = routes
+      .map((route) => {
+        const originMeasure = nearestPointOnRoute(route, origin);
+        const destinationMeasure = nearestPointOnRoute(route, destination);
+
+        return {
+          ...route,
+          origin_distance_meters: originMeasure.distance_meters,
+          destination_distance_meters: destinationMeasure.distance_meters,
+          origin_fraction: originMeasure.fraction,
+          destination_fraction: destinationMeasure.fraction,
+        };
+      })
+      .filter((route) => Number.isFinite(route.origin_distance_meters) && Number.isFinite(route.destination_distance_meters));
+
+    const direct = measuredRoutes
+      .filter(
+        (route) =>
+          route.origin_distance_meters <= ROUTE_ACCESS_RADIUS_METERS &&
+          route.destination_distance_meters <= DIRECT_DESTINATION_RADIUS_METERS
+      )
+      .sort(
+        (first, second) =>
+          first.origin_distance_meters +
+          first.destination_distance_meters -
+          (second.origin_distance_meters + second.destination_distance_meters)
+      )
+      .slice(0, 3)
+      .map((route) => ({
+        type: "direct",
+        ...route,
+      }));
+
+    const originRoutes = measuredRoutes.filter((route) => route.origin_distance_meters <= ROUTE_ACCESS_RADIUS_METERS);
+    const destinationRoutes = measuredRoutes.filter((route) => route.destination_distance_meters <= ROUTE_ACCESS_RADIUS_METERS * 2);
+
+    const transfers = [];
+
+    for (const firstRoute of originRoutes) {
+      for (const secondRoute of destinationRoutes) {
+        if (firstRoute.id === secondRoute.id || firstRoute.linea_operativa === secondRoute.linea_operativa) {
+          continue;
+        }
+
+        const transfer = nearestRoutesPoint(firstRoute, secondRoute);
+
+        if (!Number.isFinite(transfer.distance_meters) || transfer.distance_meters > TRANSFER_SEARCH_RADIUS_METERS) {
+          continue;
+        }
+
+        const firstTransfer = nearestPointOnRoute(firstRoute, transfer.first_point);
+        const secondTransfer = nearestPointOnRoute(secondRoute, transfer.second_point);
+        const score =
+          firstRoute.origin_distance_meters +
+          secondRoute.destination_distance_meters +
+          transfer.distance_meters;
+
+        transfers.push({
+          type: "transfer",
+          first_route_id: firstRoute.id,
+          first_linea_display: firstRoute.linea_display,
+          first_linea_operativa: firstRoute.linea_operativa,
+          first_sentido: firstRoute.sentido,
+          first_nombre: firstRoute.nombre,
+          first_descripcion: firstRoute.descripcion,
+          first_referencias: firstRoute.referencias,
+          origin_distance_meters: firstRoute.origin_distance_meters,
+          first_geometry: firstRoute.geometry,
+          second_route_id: secondRoute.id,
+          second_linea_display: secondRoute.linea_display,
+          second_linea_operativa: secondRoute.linea_operativa,
+          second_sentido: secondRoute.sentido,
+          second_nombre: secondRoute.nombre,
+          second_descripcion: secondRoute.descripcion,
+          second_referencias: secondRoute.referencias,
+          destination_distance_meters: secondRoute.destination_distance_meters,
+          second_geometry: secondRoute.geometry,
+          transfer_distance_meters: transfer.distance_meters,
+          transfer_point: {
+            type: "Point",
+            coordinates: [transfer.first_point.lng, transfer.first_point.lat],
+          },
+          first_transfer_fraction: firstTransfer.fraction,
+          second_transfer_fraction: secondTransfer.fraction,
+          destination_fraction: secondRoute.destination_fraction,
+          transfer_is_close: transfer.distance_meters <= TRANSFER_WARNING_RADIUS_METERS,
+          score_meters: Math.round(score),
+        });
+      }
+    }
+
+    const transferRows = transfers.sort((first, second) => first.score_meters - second.score_meters).slice(0, 5);
 
     res.json({
-      direct: directResult.rows,
-      transfers: transferResult.rows,
+      direct,
+      transfers: transferRows,
       direct_destination_radius_meters: DIRECT_DESTINATION_RADIUS_METERS,
       route_access_radius_meters: ROUTE_ACCESS_RADIUS_METERS,
       transfer_warning_radius_meters: TRANSFER_WARNING_RADIUS_METERS,
       transfer_search_radius_meters: TRANSFER_SEARCH_RADIUS_METERS,
       counts: {
-        direct: directResult.rowCount,
-        transfers: transferResult.rowCount,
+        direct: direct.length,
+        transfers: transferRows.length,
       },
     });
   } catch (error) {
