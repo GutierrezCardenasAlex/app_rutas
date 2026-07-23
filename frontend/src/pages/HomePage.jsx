@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import RouteMap from "../components/RouteMap.jsx";
+import { cityPlaces, eventGuides } from "../data/cityGuides.js";
 import { fetchNearbyRoutes, fetchReferences, fetchRoutePlan, fetchRoutes } from "../lib/api.js";
 
 function pickReference(references, fraction, fallback) {
@@ -28,6 +29,7 @@ function HomePage() {
   const [referenceResults, setReferenceResults] = useState([]);
   const [selectedReferenceRouteIds, setSelectedReferenceRouteIds] = useState([]);
   const [selectedReferencePoint, setSelectedReferencePoint] = useState(null);
+  const [activeGuideId, setActiveGuideId] = useState("chutillos");
 
   useEffect(() => {
     fetchRoutes()
@@ -384,6 +386,9 @@ function HomePage() {
   }, [routePlan]);
 
   const selectedRecommendation = recommendations[selectedPlanIndex] || null;
+  const activeGuide = eventGuides.find((guide) => guide.id === activeGuideId) || null;
+  const activeGuideRoutes = activeGuide ? [activeGuide] : [];
+  const activeGuidePlaces = activeGuideId === "lugares" ? cityPlaces : [];
 
   const handleDestinationSelect = (point) => {
     setDestinationPoint(point);
@@ -410,6 +415,95 @@ function HomePage() {
         <h2>Planifica tu recorrido</h2>
         <p className="muted">{status}</p>
         <p className="muted">Sistema pensado para lineas de Potosi como A, J, X, P, 010, 08, 012, G-L o CH.</p>
+
+        <div className="card guide-card">
+          <h3>Ch'utillos, convites y lugares</h3>
+          <p className="muted">
+            Consulta recorridos especiales, fraternidades, horarios y puntos turisticos para llegar con las mismas lineas registradas.
+          </p>
+          <div className="guide-tabs">
+            {eventGuides.map((guide) => (
+              <button
+                key={guide.id}
+                type="button"
+                className={activeGuideId === guide.id ? "small-button active" : "small-button"}
+                onClick={() => {
+                  setActiveGuideId(guide.id);
+                  setSelectedReferencePoint(null);
+                  setSelectedReferenceRouteIds([]);
+                }}
+              >
+                {guide.title}
+              </button>
+            ))}
+            <button
+              type="button"
+              className={activeGuideId === "lugares" ? "small-button active" : "small-button"}
+              onClick={() => setActiveGuideId("lugares")}
+            >
+              Lugares
+            </button>
+          </div>
+
+          {activeGuide ? (
+            <div className="guide-detail">
+              <strong>{activeGuide.subtitle}</strong>
+              <p className="muted">{`${activeGuide.type} · ${activeGuide.dateLabel}`}</p>
+              <p>{activeGuide.description}</p>
+              <button
+                className="secondary-button"
+                type="button"
+                onClick={() => {
+                  const destination = activeGuide.route[activeGuide.route.length - 1];
+                  setDestinationPoint(destination);
+                  setDestination(activeGuide.title);
+                  setStatus(`Destino marcado para ${activeGuide.title}`);
+                }}
+              >
+                Como llegar al recorrido
+              </button>
+              <ul className="festival-list">
+                {activeGuide.fraternities.map((fraternity) => (
+                  <li key={`${activeGuide.id}-${fraternity.name}`}>
+                    <span>{fraternity.name}</span>
+                    <small>{`${fraternity.time} · ${fraternity.meetingPoint}`}</small>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+
+          {activeGuideId === "lugares" ? (
+            <div className="guide-detail">
+              <p className="muted">Toca un lugar para marcarlo como destino y calcular lineas para llegar.</p>
+              <ul className="festival-list">
+                {cityPlaces.map((place) => (
+                  <li key={place.id}>
+                    <button
+                      type="button"
+                      className="link-button"
+                      onClick={() => {
+                        setDestinationPoint(place.position);
+                        setDestination(place.name);
+                        setReferenceSearch(place.name);
+                        setSelectedReferencePoint({
+                          id: place.id,
+                          nombre: place.name,
+                          lat: place.position[0],
+                          lng: place.position[1],
+                        });
+                        setStatus(`Destino marcado: ${place.name}`);
+                      }}
+                    >
+                      {place.name}
+                    </button>
+                    <small>{`${place.category} · ${place.description}`}</small>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+        </div>
 
         <label className="field">
           <span>Destino</span>
@@ -582,6 +676,8 @@ function HomePage() {
           transferPoint={selectedRecommendation?.transferPoint}
           transferPoints={selectedRecommendation?.transferPoints || []}
           referencePoints={mapReferencePoints}
+          guideRoutes={activeGuideRoutes}
+          guidePlaces={activeGuidePlaces}
         />
       </div>
     </section>

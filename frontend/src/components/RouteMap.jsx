@@ -31,6 +31,13 @@ const referenceIcon = new L.Icon({
   className: "reference-marker",
 });
 
+const placeIcon = new L.Icon({
+  iconUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png",
+  shadowUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png",
+  iconAnchor: [12, 41],
+  className: "place-marker",
+});
+
 function RecenterMap({ center }) {
   const map = useMap();
 
@@ -73,6 +80,8 @@ function RouteMap({
   selectedRouteId,
   selectedRouteIds = [],
   referencePoints = [],
+  guideRoutes = [],
+  guidePlaces = [],
   height = "70vh",
 }) {
   const highlightedIds = new Set([selectedRouteId, ...selectedRouteIds].filter(Boolean));
@@ -123,6 +132,35 @@ function RouteMap({
                 {`Por aqui pasa ${point.linea_display} (${point.linea_operativa})`}
               </>
             ) : null}
+          </Popup>
+        </Marker>
+      ))}
+      {guideRoutes.map((guideRoute) => (
+        <Polyline
+          key={guideRoute.id}
+          positions={guideRoute.route}
+          pathOptions={{
+            color: guideRoute.routeColor || "#dc2626",
+            weight: 7,
+            opacity: 0.85,
+            dashArray: "12 8",
+          }}
+        >
+          <Popup>
+            <strong>{guideRoute.title}</strong>
+            <br />
+            {guideRoute.subtitle}
+          </Popup>
+        </Polyline>
+      ))}
+      {guidePlaces.map((place) => (
+        <Marker key={place.id} position={place.position} icon={placeIcon}>
+          <Popup>
+            <strong>{place.name}</strong>
+            <br />
+            {place.category}
+            <br />
+            {place.description}
           </Popup>
         </Marker>
       ))}

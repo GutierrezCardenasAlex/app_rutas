@@ -289,9 +289,70 @@ select {
   color: #1d4ed8;
 }
 
+.small-button.active {
+  background: #0f172a;
+  color: #ffffff;
+}
+
 .small-button.danger {
   background: #fee2e2;
   color: #b91c1c;
+}
+
+.guide-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+  background: linear-gradient(145deg, #fff7ed 0%, #eff6ff 100%);
+}
+
+.guide-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.guide-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+}
+
+.guide-detail p {
+  margin: 0;
+}
+
+.festival-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.festival-list li {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  padding: 0.65rem 0.75rem;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.78);
+}
+
+.link-button {
+  width: fit-content;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: #1d4ed8;
+  cursor: pointer;
+  font-weight: 700;
+  text-align: left;
+}
+
+.place-marker {
+  filter: hue-rotate(250deg) saturate(1.5);
 }
 
 .map {
