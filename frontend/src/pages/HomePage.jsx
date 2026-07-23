@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
 import RouteMap from "../components/RouteMap.jsx";
-import { cityPlaces, eventGuides } from "../data/cityGuides.js";
 import { fetchGuides, fetchNearbyRoutes, fetchReferences, fetchRoutePlan, fetchRoutes } from "../lib/api.js";
 
 function pickReference(references, fraction, fallback) {
@@ -29,9 +28,10 @@ function HomePage() {
   const [referenceResults, setReferenceResults] = useState([]);
   const [selectedReferenceRouteIds, setSelectedReferenceRouteIds] = useState([]);
   const [selectedReferencePoint, setSelectedReferencePoint] = useState(null);
-  const [activeGuideId, setActiveGuideId] = useState("chutillos");
-  const [guideEvents, setGuideEvents] = useState(eventGuides);
-  const [guidePlaces, setGuidePlaces] = useState(cityPlaces);
+  const [activeGuideSection, setActiveGuideSection] = useState("eventos");
+  const [activeGuideId, setActiveGuideId] = useState("");
+  const [guideEvents, setGuideEvents] = useState([]);
+  const [guidePlaces, setGuidePlaces] = useState([]);
 
   useEffect(() => {
     fetchRoutes()
@@ -42,13 +42,15 @@ function HomePage() {
   useEffect(() => {
     fetchGuides()
       .then((guides) => {
-        setGuideEvents(guides.events?.length ? guides.events : eventGuides);
-        setGuidePlaces(guides.places?.length ? guides.places : cityPlaces);
-        setActiveGuideId((current) => guides.events?.some((guide) => guide.id === current) ? current : guides.events?.[0]?.id || current);
+        const events = guides.events || [];
+        const places = guides.places || [];
+        setGuideEvents(events);
+        setGuidePlaces(places);
+        setActiveGuideId((current) => (events.some((guide) => guide.id === current) ? current : events[0]?.id || ""));
       })
       .catch(() => {
-        setGuideEvents(eventGuides);
-        setGuidePlaces(cityPlaces);
+        setGuideEvents([]);
+        setGuidePlaces([]);
       });
   }, []);
 
@@ -402,8 +404,21 @@ function HomePage() {
 
   const selectedRecommendation = recommendations[selectedPlanIndex] || null;
   const activeGuide = guideEvents.find((guide) => guide.id === activeGuideId) || null;
-  const activeGuideRoutes = activeGuide ? [activeGuide] : [];
-  const activeGuidePlaces = activeGuideId === "lugares" ? guidePlaces : [];
+  const touristPlaces = guidePlaces.filter((place) => place.category === "Turistico");
+  const entertainmentPlaces = guidePlaces.filter((place) => place.category === "Diversion");
+  const referencePlaces = guidePlaces.filter(
+    (place) => !["Turistico", "Diversion"].includes(place.category)
+  );
+  const sectionPlaces =
+    activeGuideSection === "turismo"
+      ? touristPlaces
+      : activeGuideSection === "diversion"
+        ? entertainmentPlaces
+        : activeGuideSection === "referencias"
+          ? referencePlaces
+          : [];
+  const activeGuideRoutes = activeGuideSection === "eventos" && activeGuide ? [activeGuide] : [];
+  const activeGuidePlaces = activeGuideSection === "eventos" ? [] : sectionPlaces;
 
   const handleDestinationSelect = (point) => {
     setDestinationPoint(point);
@@ -432,90 +447,126 @@ function HomePage() {
         <p className="muted">Sistema pensado para lineas de Potosi como A, J, X, P, 010, 08, 012, G-L o CH.</p>
 
         <div className="card guide-card">
-          <h3>Ch'utillos, convites y lugares</h3>
-          <p className="muted">
-            Consulta recorridos especiales, fraternidades, horarios y puntos turisticos para llegar con las mismas lineas registradas.
-          </p>
-          <div className="guide-tabs">
-            {guideEvents.map((guide) => (
-              <button
-                key={guide.id}
-                type="button"
-                className={activeGuideId === guide.id ? "small-button active" : "small-button"}
-                onClick={() => {
-                  setActiveGuideId(guide.id);
-                  setSelectedReferencePoint(null);
-                  setSelectedReferenceRouteIds([]);
-                }}
-              >
-                {guide.title}
-              </button>
-            ))}
-            <button
-              type="button"
-              className={activeGuideId === "lugares" ? "small-button active" : "small-button"}
-              onClick={() => setActiveGuideId("lugares")}
-            >
-              Lugares
-            </button>
+          <div className="guide-hero">
+            <span className="guide-kicker">Guia urbana desde admin</span>
+            <h3>Eventos, turismo y vida nocturna</h3>
+            <p>
+              Todo lo que aparece aqui viene del backend: recorridos, fraternidades, horarios y lugares marcados desde el panel admin.
+            </p>
           </div>
 
-          {activeGuide ? (
-            <div className="guide-detail">
-              <strong>{activeGuide.subtitle}</strong>
-              <p className="muted">{`${activeGuide.type} · ${activeGuide.dateLabel}`}</p>
-              <p>{activeGuide.description}</p>
+          <div className="guide-tabs segmented">
+            {[
+              ["eventos", "Eventos"],
+              ["turismo", "Turismo"],
+              ["diversion", "Diversion"],
+              ["referencias", "Referencias"],
+            ].map(([section, label]) => (
               <button
-                className="secondary-button"
+                key={section}
                 type="button"
-                onClick={() => {
-                  const destination = activeGuide.route[activeGuide.route.length - 1];
-                  setDestinationPoint(destination);
-                  setDestination(activeGuide.title);
-                  setStatus(`Destino marcado para ${activeGuide.title}`);
-                }}
+                className={activeGuideSection === section ? "small-button active" : "small-button"}
+                onClick={() => setActiveGuideSection(section)}
               >
-                Como llegar al recorrido
+                {label}
               </button>
-              <ul className="festival-list">
-                {activeGuide.fraternities.map((fraternity) => (
-                  <li key={`${activeGuide.id}-${fraternity.name}`}>
-                    <span>{fraternity.name}</span>
-                    <small>{`${fraternity.time} · ${fraternity.meetingPoint}`}</small>
-                  </li>
-                ))}
-              </ul>
+            ))}
+          </div>
+
+          {activeGuideSection === "eventos" ? (
+            <div className="guide-detail">
+              {guideEvents.length > 0 ? (
+                <>
+                  <div className="event-picker">
+                    {guideEvents.map((guide) => (
+                      <button
+                        key={guide.id}
+                        type="button"
+                        className={activeGuideId === guide.id ? "event-chip active" : "event-chip"}
+                        onClick={() => {
+                          setActiveGuideId(guide.id);
+                          setSelectedReferencePoint(null);
+                          setSelectedReferenceRouteIds([]);
+                        }}
+                      >
+                        <strong>{guide.title}</strong>
+                        <small>{guide.dateLabel || "Sin fecha"}</small>
+                      </button>
+                    ))}
+                  </div>
+
+                  {activeGuide ? (
+                    <div className="event-panel">
+                      <strong>{activeGuide.subtitle || activeGuide.title}</strong>
+                      <p className="muted">{`${activeGuide.type || "Evento"} · ${activeGuide.dateLabel || "Sin fecha definida"}`}</p>
+                      <p>{activeGuide.description || "Sin descripcion."}</p>
+                      <button
+                        className="secondary-button"
+                        type="button"
+                        disabled={!activeGuide.route?.length}
+                        onClick={() => {
+                          const destination = activeGuide.route[activeGuide.route.length - 1];
+                          setDestinationPoint(destination);
+                          setDestination(activeGuide.title);
+                          setStatus(`Destino marcado para ${activeGuide.title}`);
+                        }}
+                      >
+                        Como llegar al recorrido
+                      </button>
+                      {activeGuide.fraternities?.length > 0 ? (
+                        <ul className="festival-list timeline">
+                          {activeGuide.fraternities.map((fraternity) => (
+                            <li key={`${activeGuide.id}-${fraternity.name}-${fraternity.time}`}>
+                              <span>{fraternity.name}</span>
+                              <small>{`${fraternity.time || "Sin hora"} · ${fraternity.meetingPoint || "Sin punto"}`}</small>
+                            </li>
+                          ))}
+                        </ul>
+                      ) : (
+                        <p className="muted">Aun no hay fraternidades ni horarios registrados para este evento.</p>
+                      )}
+                    </div>
+                  ) : null}
+                </>
+              ) : (
+                <p className="muted">Aun no hay eventos cargados. Registralos desde el panel admin.</p>
+              )}
             </div>
           ) : null}
 
-          {activeGuideId === "lugares" ? (
+          {activeGuideSection !== "eventos" ? (
             <div className="guide-detail">
               <p className="muted">Toca un lugar para marcarlo como destino y calcular lineas para llegar.</p>
-              <ul className="festival-list">
-                {guidePlaces.map((place) => (
-                  <li key={place.id}>
-                    <button
-                      type="button"
-                      className="link-button"
-                      onClick={() => {
-                        setDestinationPoint(place.position);
-                        setDestination(place.name);
-                        setReferenceSearch(place.name);
-                        setSelectedReferencePoint({
-                          id: place.id,
-                          nombre: place.name,
-                          lat: place.position[0],
-                          lng: place.position[1],
-                        });
-                        setStatus(`Destino marcado: ${place.name}`);
-                      }}
-                    >
-                      {place.name}
-                    </button>
-                    <small>{`${place.category} · ${place.description}`}</small>
-                  </li>
-                ))}
-              </ul>
+              {sectionPlaces.length > 0 ? (
+                <ul className="place-grid">
+                  {sectionPlaces.map((place) => (
+                    <li key={place.id}>
+                      <button
+                        type="button"
+                        className="place-card-button"
+                        onClick={() => {
+                          setDestinationPoint(place.position);
+                          setDestination(place.name);
+                          setReferenceSearch(place.name);
+                          setSelectedReferencePoint({
+                            id: place.id,
+                            nombre: place.name,
+                            lat: place.position[0],
+                            lng: place.position[1],
+                          });
+                          setStatus(`Destino marcado: ${place.name}`);
+                        }}
+                      >
+                        <span>{place.category}</span>
+                        <strong>{place.name}</strong>
+                        <small>{place.description || "Sin descripcion."}</small>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="muted">Aun no hay lugares en este apartado. Registralos desde el panel admin.</p>
+              )}
             </div>
           ) : null}
         </div>
