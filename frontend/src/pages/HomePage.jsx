@@ -438,6 +438,15 @@ function HomePage() {
   const destinationSummary = destinationPoint
     ? `Destino marcado: ${destinationPoint[0].toFixed(5)}, ${destinationPoint[1].toFixed(5)}`
     : "";
+  const routeListToShow = nearbyRoutes.length > 0 ? nearbyRoutes : routesToDisplay;
+  const routeListTitle = nearbyRoutes.length > 0 ? "Rutas cercanas a ti" : "Rutas disponibles";
+  const routeListHint =
+    nearbyRoutes.length > 0
+      ? "Estas lineas pasan cerca de tu ubicacion actual."
+      : position
+        ? "No hay rutas dentro de 500 m, pero puedes revisar todas las lineas registradas."
+        : "Activa tu ubicacion para ordenar por cercania. Mientras tanto puedes tocar una ruta para verla en el mapa.";
+  const canCalculateTrip = Boolean(position && destinationPoint);
 
   return (
     <section className="layout">
@@ -641,10 +650,22 @@ function HomePage() {
           ) : null}
         </div>
 
-        <div className="card">
+        <div className="card trip-helper-card">
           <h3>Como llegar</h3>
-          {!position ? <p className="muted">Activa tu ubicacion para calcular desde donde estas.</p> : null}
-          {!destinationPoint ? <p className="muted">Marca tu destino en el mapa para calcular lineas y transbordos.</p> : null}
+          <div className="trip-checklist">
+            <div className={position ? "trip-step complete" : "trip-step pending"}>
+              <strong>1. Ubicacion</strong>
+              <span>{position ? "Lista para calcular desde donde estas." : "Activa tu ubicacion para detectar rutas cercanas."}</span>
+            </div>
+            <div className={destinationPoint ? "trip-step complete" : "trip-step pending"}>
+              <strong>2. Destino</strong>
+              <span>{destinationPoint ? destinationSummary : "Toca el mapa, elige un lugar o busca una referencia."}</span>
+            </div>
+            <div className={canCalculateTrip ? "trip-step complete" : "trip-step pending"}>
+              <strong>3. Lineas</strong>
+              <span>{canCalculateTrip ? "Calculando la mejor combinacion de micros." : "Cuando completes ubicacion y destino, saldra la recomendacion."}</span>
+            </div>
+          </div>
           {planStatus ? <p className="muted">{planStatus}</p> : null}
           {routePlan ? (
             <p className="muted">{`Opciones: ${routePlan.counts?.itineraries || 0} alternativas calculadas.`}</p>
@@ -692,12 +713,13 @@ function HomePage() {
         </div>
 
         <div className="card">
-          <h3>Rutas cercanas</h3>
-          {nearbyRoutes.length === 0 ? (
-            <p className="muted">Aun no hay rutas dentro de 500 metros. Mostrando todas las rutas registradas.</p>
+          <h3>{routeListTitle}</h3>
+          <p className="muted">{routeListHint}</p>
+          {routeListToShow.length === 0 ? (
+            <p className="muted">Aun no hay rutas registradas desde el admin.</p>
           ) : (
             <ul className="route-list">
-              {nearbyRoutes.map((route) => (
+              {routeListToShow.slice(0, 12).map((route) => (
                 <li key={route.id}>
                   <button
                     type="button"
@@ -705,7 +727,7 @@ function HomePage() {
                     onClick={() => setSelectedRouteId(route.id)}
                   >
                     <span>{`${route.linea_display} · ${route.sentido}`}</span>
-                    <small>{`${route.distance_meters} m`}</small>
+                    <small>{route.distance_meters ? `${route.distance_meters} m` : "ver ruta"}</small>
                   </button>
                 </li>
               ))}

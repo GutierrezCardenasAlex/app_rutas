@@ -213,6 +213,46 @@ select {
   font-weight: 700;
 }
 
+.trip-helper-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.8rem;
+}
+
+.trip-checklist {
+  display: grid;
+  gap: 0.55rem;
+}
+
+.trip-step {
+  display: flex;
+  flex-direction: column;
+  gap: 0.18rem;
+  padding: 0.72rem 0.8rem;
+  border-radius: 14px;
+  border: 1px solid #e2e8f0;
+  background: #ffffff;
+}
+
+.trip-step strong {
+  font-size: 0.9rem;
+}
+
+.trip-step span {
+  color: #475569;
+  font-size: 0.88rem;
+}
+
+.trip-step.complete {
+  border-color: #bbf7d0;
+  background: #f0fdf4;
+}
+
+.trip-step.pending {
+  border-color: #fed7aa;
+  background: #fff7ed;
+}
+
 .muted {
   color: #475569;
 }
