@@ -3,11 +3,18 @@ import { MapContainer, Marker, Polyline, Popup, TileLayer, useMapEvents } from "
 import AdminDrawControl from "../components/AdminDrawControl.jsx";
 import {
   clearAdminPassword,
+  createGuideEvent,
+  createGuidePlace,
   createRoute,
+  deleteGuideEvent,
+  deleteGuidePlace,
+  fetchGuides,
   deleteRoute,
   fetchRoutes,
   hasAdminPassword,
   setAdminPassword,
+  updateGuideEvent,
+  updateGuidePlace,
   updateRoute,
   verifyAdminSession,
 } from "../lib/api.js";
@@ -21,6 +28,22 @@ const emptyForm = {
   descripcion: "",
   referencias: "",
 };
+const emptyEventForm = {
+  title: "",
+  subtitle: "",
+  type: "Evento",
+  dateLabel: "",
+  description: "",
+  routeColor: "#dc2626",
+  fraternities: "",
+};
+const emptyPlaceForm = {
+  name: "",
+  category: "Turistico",
+  description: "",
+  lat: "",
+  lng: "",
+};
 
 function geometryToLatLngs(geometry) {
   if (!geometry?.coordinates) {
@@ -30,10 +53,37 @@ function geometryToLatLngs(geometry) {
   return geometry.coordinates.map(([lng, lat]) => [lat, lng]);
 }
 
-function ReferencePointPicker({ enabled, onAddPoint }) {
+function geometryToGuideRoute(geometry) {
+  return geometryToLatLngs(geometry);
+}
+
+function parseFraternities(value) {
+  return String(value || "")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const [name = "", time = "", meetingPoint = ""] = line.split("|").map((item) => item.trim());
+      return { name, time, meetingPoint };
+    })
+    .filter((item) => item.name);
+}
+
+function formatFraternities(fraternities) {
+  return (fraternities || [])
+    .map((item) => [item.name, item.time, item.meetingPoint].filter(Boolean).join(" | "))
+    .join("\n");
+}
+
+function ReferencePointPicker({ enabled, onAddPoint, onPickPlace }) {
   useMapEvents({
     click(event) {
-      if (!enabled) {
+      if (!enabled && !onPickPlace) {
+        return;
+      }
+
+      if (onPickPlace) {
+        onPickPlace([event.latlng.lat, event.latlng.lng]);
         return;
       }
 
@@ -69,6 +119,12 @@ function AdminPage() {
   const [selectedRouteId, setSelectedRouteId] = useState(null);
   const [referencePoints, setReferencePoints] = useState([]);
   const [isAddingReferencePoint, setIsAddingReferencePoint] = useState(false);
+  const [guides, setGuides] = useState({ events: [], places: [] });
+  const [eventForm, setEventForm] = useState(emptyEventForm);
+  const [editingEventId, setEditingEventId] = useState(null);
+  const [placeForm, setPlaceForm] = useState(emptyPlaceForm);
+  const [editingPlaceId, setEditingPlaceId] = useState(null);
+  const [isPickingPlace, setIsPickingPlace] = useState(false);
 
   useEffect(() => {
     fetchRoutes()
@@ -76,6 +132,12 @@ function AdminPage() {
         setRoutes(items);
         setSelectedRouteId(items[0]?.id ?? null);
       })
+      .catch((error) => setMessage(error.message));
+  }, []);
+
+  useEffect(() => {
+    fetchGuides()
+      .then(setGuides)
       .catch((error) => setMessage(error.message));
   }, []);
 
@@ -114,6 +176,11 @@ function AdminPage() {
     setSelectedRouteId(updatedRoutes[0]?.id ?? null);
   };
 
+  const reloadGuides = async () => {
+    const updatedGuides = await fetchGuides();
+    setGuides(updatedGuides);
+  };
+
   const handleGeometryChange = (geoJson) => {
     setDraftGeoJson(geoJson);
     setMessage(editingRouteId ? "Geometria actualizada. Guarda los cambios cuando estes listo." : "Linea capturada. Completa el formulario para guardar la ruta.");
@@ -122,6 +189,19 @@ function AdminPage() {
   const handleDeleted = () => {
     setDraftGeoJson(null);
     setMessage("La geometria fue eliminada del mapa.");
+  };
+
+  const resetEventForm = () => {
+    setEventForm(emptyEventForm);
+    setEditingEventId(null);
+    setDraftGeoJson(null);
+    setClearSignal((current) => current + 1);
+  };
+
+  const resetPlaceForm = () => {
+    setPlaceForm(emptyPlaceForm);
+    setEditingPlaceId(null);
+    setIsPickingPlace(false);
   };
 
   const handleSave = async (event) => {
@@ -148,6 +228,59 @@ function AdminPage() {
       resetForm();
       setMessage(editingRouteId ? "Ruta actualizada correctamente." : "Ruta guardada correctamente.");
       await reloadRoutes();
+    } catch (error) {
+      setMessage(error.message);
+    }
+  };
+
+  const handleSaveEvent = async (event) => {
+    event.preventDefault();
+
+    if (!draftGeoJson) {
+      setMessage("Dibuja el recorrido del evento en el mapa antes de guardar.");
+      return;
+    }
+
+    try {
+      const payload = {
+        ...eventForm,
+        route: geometryToGuideRoute(draftGeoJson),
+        fraternities: parseFraternities(eventForm.fraternities),
+      };
+
+      if (editingEventId) {
+        await updateGuideEvent(editingEventId, payload);
+      } else {
+        await createGuideEvent(payload);
+      }
+
+      resetEventForm();
+      setMessage(editingEventId ? "Evento actualizado correctamente." : "Evento guardado correctamente.");
+      await reloadGuides();
+    } catch (error) {
+      setMessage(error.message);
+    }
+  };
+
+  const handleSavePlace = async (event) => {
+    event.preventDefault();
+
+    try {
+      const payload = {
+        ...placeForm,
+        lat: Number(placeForm.lat),
+        lng: Number(placeForm.lng),
+      };
+
+      if (editingPlaceId) {
+        await updateGuidePlace(editingPlaceId, payload);
+      } else {
+        await createGuidePlace(payload);
+      }
+
+      resetPlaceForm();
+      setMessage(editingPlaceId ? "Lugar actualizado correctamente." : "Lugar guardado correctamente.");
+      await reloadGuides();
     } catch (error) {
       setMessage(error.message);
     }
@@ -206,6 +339,56 @@ function AdminPage() {
 
       setMessage("Ruta eliminada correctamente.");
       await reloadRoutes();
+    } catch (error) {
+      setMessage(error.message);
+    }
+  };
+
+  const handleEditEvent = (event) => {
+    setEditingEventId(event.id);
+    setEventForm({
+      title: event.title,
+      subtitle: event.subtitle || "",
+      type: event.type || "Evento",
+      dateLabel: event.dateLabel || "",
+      description: event.description || "",
+      routeColor: event.routeColor || "#dc2626",
+      fraternities: formatFraternities(event.fraternities),
+    });
+    setDraftGeoJson({
+      type: "LineString",
+      coordinates: event.route.map(([lat, lng]) => [lng, lat]),
+    });
+    setMessage(`Editando evento ${event.title}. Puedes redibujar su recorrido en el mapa.`);
+  };
+
+  const handleDeleteEvent = async (eventId) => {
+    try {
+      await deleteGuideEvent(eventId);
+      setMessage("Evento eliminado correctamente.");
+      await reloadGuides();
+    } catch (error) {
+      setMessage(error.message);
+    }
+  };
+
+  const handleEditPlace = (place) => {
+    setEditingPlaceId(place.id);
+    setPlaceForm({
+      name: place.name,
+      category: place.category,
+      description: place.description || "",
+      lat: place.position[0],
+      lng: place.position[1],
+    });
+    setMessage(`Editando lugar ${place.name}. Puedes marcar otro punto en el mapa.`);
+  };
+
+  const handleDeletePlace = async (placeId) => {
+    try {
+      await deleteGuidePlace(placeId);
+      setMessage("Lugar eliminado correctamente.");
+      await reloadGuides();
     } catch (error) {
       setMessage(error.message);
     }
@@ -368,6 +551,169 @@ function AdminPage() {
           ) : null}
         </form>
 
+        <form className="admin-form" onSubmit={handleSaveEvent}>
+          <div className="card reference-editor">
+            <h3>Eventos: Ch'utillos y convites</h3>
+            <p className="muted">
+              Dibuja en el mapa el recorrido del evento y llena fraternidades con el formato: Nombre | Hora | Punto.
+            </p>
+            <label className="field">
+              <span>Titulo</span>
+              <input
+                type="text"
+                value={eventForm.title}
+                onChange={(event) => setEventForm((current) => ({ ...current, title: event.target.value }))}
+                placeholder="Ej. Ch'utillos, Convites"
+              />
+            </label>
+            <label className="field">
+              <span>Subtitulo</span>
+              <input
+                type="text"
+                value={eventForm.subtitle}
+                onChange={(event) => setEventForm((current) => ({ ...current, subtitle: event.target.value }))}
+                placeholder="Ej. Recorrido principal"
+              />
+            </label>
+            <label className="field">
+              <span>Tipo y fecha</span>
+              <input
+                type="text"
+                value={eventForm.type}
+                onChange={(event) => setEventForm((current) => ({ ...current, type: event.target.value }))}
+                placeholder="Ej. Fiesta mayor"
+              />
+              <input
+                type="text"
+                value={eventForm.dateLabel}
+                onChange={(event) => setEventForm((current) => ({ ...current, dateLabel: event.target.value }))}
+                placeholder="Ej. Sabado 24 de agosto, 09:00"
+              />
+            </label>
+            <label className="field">
+              <span>Descripcion</span>
+              <textarea
+                rows="3"
+                value={eventForm.description}
+                onChange={(event) => setEventForm((current) => ({ ...current, description: event.target.value }))}
+                placeholder="Explica por donde pasa y como ayuda a la movilidad."
+              />
+            </label>
+            <label className="field">
+              <span>Color del recorrido</span>
+              <input
+                type="color"
+                value={eventForm.routeColor}
+                onChange={(event) => setEventForm((current) => ({ ...current, routeColor: event.target.value }))}
+              />
+            </label>
+            <label className="field">
+              <span>Fraternidades y horarios</span>
+              <textarea
+                rows="5"
+                value={eventForm.fraternities}
+                onChange={(event) => setEventForm((current) => ({ ...current, fraternities: event.target.value }))}
+                placeholder={"Tinkus Central | 09:00 | Concentracion inicial\nMorenada Potosi | 10:30 | Av. civica"}
+              />
+            </label>
+            <button className="primary-button" type="submit">
+              {editingEventId ? "Guardar evento" : "Crear evento"}
+            </button>
+            {editingEventId ? (
+              <button className="secondary-button" type="button" onClick={resetEventForm}>
+                Cancelar evento
+              </button>
+            ) : null}
+            <ul className="route-list compact">
+              {guides.events.map((event) => (
+                <li key={event.id}>
+                  <strong>{event.title}</strong>
+                  <small>{`${event.type || "Evento"} · ${event.dateLabel || "Sin fecha"}`}</small>
+                  <small>{`${event.fraternities?.length || 0} fraternidad(es)`}</small>
+                  <div className="route-actions">
+                    <button className="small-button" type="button" onClick={() => handleEditEvent(event)}>
+                      Editar
+                    </button>
+                    <button className="small-button danger" type="button" onClick={() => handleDeleteEvent(event.id)}>
+                      Eliminar
+                    </button>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </div>
+        </form>
+
+        <form className="admin-form" onSubmit={handleSavePlace}>
+          <div className="card reference-editor">
+            <h3>Lugares turisticos, discotecas y referencias</h3>
+            <p className="muted">Activa el marcador y haz clic en el mapa para guardar el punto exacto del lugar.</p>
+            <label className="field">
+              <span>Nombre</span>
+              <input
+                type="text"
+                value={placeForm.name}
+                onChange={(event) => setPlaceForm((current) => ({ ...current, name: event.target.value }))}
+                placeholder="Ej. Casa de Moneda, discoteca, mirador..."
+              />
+            </label>
+            <label className="field">
+              <span>Categoria</span>
+              <select
+                value={placeForm.category}
+                onChange={(event) => setPlaceForm((current) => ({ ...current, category: event.target.value }))}
+              >
+                <option value="Turistico">Turistico</option>
+                <option value="Diversion">Diversion</option>
+                <option value="Referencia">Referencia</option>
+                <option value="Salud">Salud</option>
+                <option value="Comercio">Comercio</option>
+              </select>
+            </label>
+            <label className="field">
+              <span>Descripcion</span>
+              <textarea
+                rows="3"
+                value={placeForm.description}
+                onChange={(event) => setPlaceForm((current) => ({ ...current, description: event.target.value }))}
+                placeholder="Ayuda al usuario a reconocer el lugar."
+              />
+            </label>
+            <button
+              className={isPickingPlace ? "primary-button" : "secondary-button"}
+              type="button"
+              onClick={() => setIsPickingPlace((current) => !current)}
+            >
+              {isPickingPlace ? "Haz clic en el mapa" : "Marcar punto del lugar"}
+            </button>
+            {placeForm.lat && placeForm.lng ? <p className="muted">{`Punto: ${Number(placeForm.lat).toFixed(5)}, ${Number(placeForm.lng).toFixed(5)}`}</p> : null}
+            <button className="primary-button" type="submit">
+              {editingPlaceId ? "Guardar lugar" : "Crear lugar"}
+            </button>
+            {editingPlaceId ? (
+              <button className="secondary-button" type="button" onClick={resetPlaceForm}>
+                Cancelar lugar
+              </button>
+            ) : null}
+            <ul className="route-list compact">
+              {guides.places.map((place) => (
+                <li key={place.id}>
+                  <strong>{place.name}</strong>
+                  <small>{`${place.category} · ${place.description || "Sin descripcion"}`}</small>
+                  <div className="route-actions">
+                    <button className="small-button" type="button" onClick={() => handleEditPlace(place)}>
+                      Editar
+                    </button>
+                    <button className="small-button danger" type="button" onClick={() => handleDeletePlace(place.id)}>
+                      Eliminar
+                    </button>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </div>
+        </form>
+
         <div className="card">
           <h3>Estado</h3>
           <p>{draftGeoJson ? "Hay una geometria lista para guardar." : "Aun no hay una linea dibujada."}</p>
@@ -446,6 +792,38 @@ function AdminPage() {
               </Popup>
             </Polyline>
           ))}
+          {guides.events.map((event) => (
+            <Polyline
+              key={`event-${event.id}`}
+              positions={event.route}
+              pathOptions={{
+                color: event.routeColor || "#dc2626",
+                weight: editingEventId === event.id ? 7 : 4,
+                opacity: editingEventId === event.id ? 0.95 : 0.55,
+                dashArray: "12 8",
+              }}
+            >
+              <Popup>
+                <strong>{event.title}</strong>
+                <br />
+                {event.subtitle || "Recorrido de evento"}
+              </Popup>
+            </Polyline>
+          ))}
+          {guides.places.map((place) => (
+            <Marker key={`place-${place.id}`} position={place.position}>
+              <Popup>
+                <strong>{place.name}</strong>
+                <br />
+                {place.category}
+              </Popup>
+            </Marker>
+          ))}
+          {placeForm.lat && placeForm.lng ? (
+            <Marker position={[Number(placeForm.lat), Number(placeForm.lng)]}>
+              <Popup>{placeForm.name || "Lugar seleccionado"}</Popup>
+            </Marker>
+          ) : null}
           {highlightedReferencePoints.map((point, index) => (
             <Marker key={`${point.nombre}-${point.lat}-${point.lng}-${index}`} position={[point.lat, point.lng]}>
               <Popup>
@@ -457,6 +835,15 @@ function AdminPage() {
           ))}
           <ReferencePointPicker
             enabled={isAddingReferencePoint}
+            onPickPlace={
+              isPickingPlace
+                ? ([lat, lng]) => {
+                    setPlaceForm((current) => ({ ...current, lat, lng }));
+                    setIsPickingPlace(false);
+                    setMessage("Punto del lugar marcado. Completa los datos y guarda.");
+                  }
+                : null
+            }
             onAddPoint={(point) => {
               setReferencePoints((current) => [...current, point]);
               setMessage(`Punto agregado: ${point.nombre}.`);

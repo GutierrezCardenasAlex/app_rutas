@@ -93,6 +93,10 @@ export function fetchReferences(query = "") {
   return request(`/references${params}`);
 }
 
+export function fetchGuides() {
+  return request("/guides");
+}
+
 export function createRoute(payload) {
   return request("/admin/routes", {
     method: "POST",
@@ -111,6 +115,52 @@ export function updateRoute(id, payload) {
 
 export function deleteRoute(id) {
   return request(`/admin/routes/${id}`, {
+    method: "DELETE",
+    adminAuth: true,
+  });
+}
+
+export function createGuideEvent(payload) {
+  return request("/admin/guides/events", {
+    method: "POST",
+    adminAuth: true,
+    body: JSON.stringify(payload),
+  });
+}
+
+export function updateGuideEvent(id, payload) {
+  return request(`/admin/guides/events/${id}`, {
+    method: "PUT",
+    adminAuth: true,
+    body: JSON.stringify(payload),
+  });
+}
+
+export function deleteGuideEvent(id) {
+  return request(`/admin/guides/events/${id}`, {
+    method: "DELETE",
+    adminAuth: true,
+  });
+}
+
+export function createGuidePlace(payload) {
+  return request("/admin/guides/places", {
+    method: "POST",
+    adminAuth: true,
+    body: JSON.stringify(payload),
+  });
+}
+
+export function updateGuidePlace(id, payload) {
+  return request(`/admin/guides/places/${id}`, {
+    method: "PUT",
+    adminAuth: true,
+    body: JSON.stringify(payload),
+  });
+}
+
+export function deleteGuidePlace(id) {
+  return request(`/admin/guides/places/${id}`, {
     method: "DELETE",
     adminAuth: true,
   });

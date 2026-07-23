@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import RouteMap from "../components/RouteMap.jsx";
 import { cityPlaces, eventGuides } from "../data/cityGuides.js";
-import { fetchNearbyRoutes, fetchReferences, fetchRoutePlan, fetchRoutes } from "../lib/api.js";
+import { fetchGuides, fetchNearbyRoutes, fetchReferences, fetchRoutePlan, fetchRoutes } from "../lib/api.js";
 
 function pickReference(references, fraction, fallback) {
   if (!Array.isArray(references) || references.length === 0 || !Number.isFinite(Number(fraction))) {
@@ -30,11 +30,26 @@ function HomePage() {
   const [selectedReferenceRouteIds, setSelectedReferenceRouteIds] = useState([]);
   const [selectedReferencePoint, setSelectedReferencePoint] = useState(null);
   const [activeGuideId, setActiveGuideId] = useState("chutillos");
+  const [guideEvents, setGuideEvents] = useState(eventGuides);
+  const [guidePlaces, setGuidePlaces] = useState(cityPlaces);
 
   useEffect(() => {
     fetchRoutes()
       .then(setAllRoutes)
       .catch((apiError) => setError(apiError.message));
+  }, []);
+
+  useEffect(() => {
+    fetchGuides()
+      .then((guides) => {
+        setGuideEvents(guides.events?.length ? guides.events : eventGuides);
+        setGuidePlaces(guides.places?.length ? guides.places : cityPlaces);
+        setActiveGuideId((current) => guides.events?.some((guide) => guide.id === current) ? current : guides.events?.[0]?.id || current);
+      })
+      .catch(() => {
+        setGuideEvents(eventGuides);
+        setGuidePlaces(cityPlaces);
+      });
   }, []);
 
   useEffect(() => {
@@ -386,9 +401,9 @@ function HomePage() {
   }, [routePlan]);
 
   const selectedRecommendation = recommendations[selectedPlanIndex] || null;
-  const activeGuide = eventGuides.find((guide) => guide.id === activeGuideId) || null;
+  const activeGuide = guideEvents.find((guide) => guide.id === activeGuideId) || null;
   const activeGuideRoutes = activeGuide ? [activeGuide] : [];
-  const activeGuidePlaces = activeGuideId === "lugares" ? cityPlaces : [];
+  const activeGuidePlaces = activeGuideId === "lugares" ? guidePlaces : [];
 
   const handleDestinationSelect = (point) => {
     setDestinationPoint(point);
@@ -422,7 +437,7 @@ function HomePage() {
             Consulta recorridos especiales, fraternidades, horarios y puntos turisticos para llegar con las mismas lineas registradas.
           </p>
           <div className="guide-tabs">
-            {eventGuides.map((guide) => (
+            {guideEvents.map((guide) => (
               <button
                 key={guide.id}
                 type="button"
@@ -477,7 +492,7 @@ function HomePage() {
             <div className="guide-detail">
               <p className="muted">Toca un lugar para marcarlo como destino y calcular lineas para llegar.</p>
               <ul className="festival-list">
-                {cityPlaces.map((place) => (
+                {guidePlaces.map((place) => (
                   <li key={place.id}>
                     <button
                       type="button"

@@ -261,6 +261,51 @@ function normalizeReferencePoints(value) {
     .filter((item) => item.nombre && Number.isFinite(item.lat) && Number.isFinite(item.lng));
 }
 
+function normalizeFraternities(value) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .map((item) => ({
+      name: String(item?.name || "").trim(),
+      time: String(item?.time || "").trim(),
+      meetingPoint: String(item?.meetingPoint || "").trim(),
+    }))
+    .filter((item) => item.name);
+}
+
+function latLngRouteToGeoJson(route) {
+  if (!Array.isArray(route) || route.length < 2) {
+    return null;
+  }
+
+  const coordinates = route
+    .map((point) => {
+      const lat = Number(point?.[0]);
+      const lng = Number(point?.[1]);
+      return Number.isFinite(lat) && Number.isFinite(lng) ? [lng, lat] : null;
+    })
+    .filter(Boolean);
+
+  if (coordinates.length < 2) {
+    return null;
+  }
+
+  return {
+    type: "LineString",
+    coordinates,
+  };
+}
+
+function geoJsonToLatLngRoute(geometry) {
+  if (!geometry?.coordinates) {
+    return [];
+  }
+
+  return geometry.coordinates.map(([lng, lat]) => [lat, lng]);
+}
+
 async function saveReferencePoints(client, routeId, referencePoints) {
   await client.query("DELETE FROM ruta_referencias WHERE ruta_id = $1", [routeId]);
 
@@ -271,6 +316,20 @@ async function saveReferencePoints(client, routeId, referencePoints) {
         VALUES ($1, $2, ST_SetSRID(ST_MakePoint($3, $4), 4326))
       `,
       [routeId, point.nombre, point.lng, point.lat]
+    );
+  }
+}
+
+async function saveFraternities(client, eventId, fraternities) {
+  await client.query("DELETE FROM guia_evento_fraternidades WHERE evento_id = $1", [eventId]);
+
+  for (const [index, fraternity] of fraternities.entries()) {
+    await client.query(
+      `
+        INSERT INTO guia_evento_fraternidades (evento_id, nombre, hora, punto_concentracion, orden)
+        VALUES ($1, $2, $3, $4, $5)
+      `,
+      [eventId, fraternity.name, fraternity.time, fraternity.meetingPoint, index + 1]
     );
   }
 }
@@ -315,6 +374,46 @@ async function ensureSchema() {
     CREATE INDEX IF NOT EXISTS ruta_referencias_nombre_idx
       ON ruta_referencias
       USING BTREE (LOWER(nombre));
+
+    CREATE TABLE IF NOT EXISTS guia_eventos (
+      id SERIAL PRIMARY KEY,
+      titulo TEXT NOT NULL,
+      subtitulo TEXT DEFAULT '',
+      tipo TEXT DEFAULT '',
+      fecha_texto TEXT DEFAULT '',
+      descripcion TEXT DEFAULT '',
+      color TEXT DEFAULT '#dc2626',
+      geom GEOMETRY(LINESTRING, 4326),
+      activo BOOLEAN DEFAULT TRUE,
+      created_at TIMESTAMP DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS guia_eventos_geom_idx
+      ON guia_eventos
+      USING GIST (geom);
+
+    CREATE TABLE IF NOT EXISTS guia_evento_fraternidades (
+      id SERIAL PRIMARY KEY,
+      evento_id INTEGER NOT NULL REFERENCES guia_eventos(id) ON DELETE CASCADE,
+      nombre TEXT NOT NULL,
+      hora TEXT DEFAULT '',
+      punto_concentracion TEXT DEFAULT '',
+      orden INTEGER DEFAULT 0
+    );
+
+    CREATE TABLE IF NOT EXISTS guia_lugares (
+      id SERIAL PRIMARY KEY,
+      nombre TEXT NOT NULL,
+      categoria TEXT DEFAULT 'Referencia',
+      descripcion TEXT DEFAULT '',
+      geom GEOMETRY(POINT, 4326) NOT NULL,
+      activo BOOLEAN DEFAULT TRUE,
+      created_at TIMESTAMP DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS guia_lugares_geom_idx
+      ON guia_lugares
+      USING GIST (geom);
   `);
 
   await pool.query(`
@@ -1028,8 +1127,273 @@ app.get("/routes/plan", async (req, res) => {
   }
 });
 
+app.get("/guides", async (_req, res) => {
+  try {
+    const { rows: eventRows } = await pool.query(`
+      SELECT
+        ge.id,
+        ge.titulo,
+        ge.subtitulo,
+        ge.tipo,
+        ge.fecha_texto,
+        ge.descripcion,
+        ge.color,
+        ST_AsGeoJSON(ge.geom)::json AS geometry,
+        COALESCE(
+          (
+            SELECT json_agg(
+              json_build_object(
+                'id', gef.id,
+                'name', gef.nombre,
+                'time', gef.hora,
+                'meetingPoint', gef.punto_concentracion
+              )
+              ORDER BY gef.orden ASC, gef.id ASC
+            )
+            FROM guia_evento_fraternidades gef
+            WHERE gef.evento_id = ge.id
+          ),
+          '[]'::json
+        ) AS fraternities
+      FROM guia_eventos ge
+      WHERE ge.activo = TRUE
+      ORDER BY ge.id DESC
+    `);
+    const { rows: placeRows } = await pool.query(`
+      SELECT
+        id,
+        nombre,
+        categoria,
+        descripcion,
+        ST_Y(geom) AS lat,
+        ST_X(geom) AS lng
+      FROM guia_lugares
+      WHERE activo = TRUE
+      ORDER BY categoria ASC, nombre ASC
+    `);
+
+    res.json({
+      events: eventRows.map((event) => ({
+        id: String(event.id),
+        title: event.titulo,
+        subtitle: event.subtitulo,
+        type: event.tipo,
+        dateLabel: event.fecha_texto,
+        description: event.descripcion,
+        routeColor: event.color,
+        route: geoJsonToLatLngRoute(event.geometry),
+        fraternities: event.fraternities,
+      })),
+      places: placeRows.map((place) => ({
+        id: String(place.id),
+        name: place.nombre,
+        category: place.categoria,
+        description: place.descripcion,
+        position: [Number(place.lat), Number(place.lng)],
+      })),
+    });
+  } catch (error) {
+    res.status(500).json({ error: "No se pudieron cargar las guias de ciudad.", details: error.message });
+  }
+});
+
 app.get("/admin/session", requireAdminAuth, (_req, res) => {
   res.json({ ok: true });
+});
+
+app.post("/admin/guides/events", requireAdminAuth, async (req, res) => {
+  const {
+    title,
+    subtitle = "",
+    type = "",
+    dateLabel = "",
+    description = "",
+    routeColor = "#dc2626",
+    route = [],
+    fraternities = [],
+  } = req.body;
+  const routeGeoJson = latLngRouteToGeoJson(route);
+  const normalizedFraternities = normalizeFraternities(fraternities);
+
+  if (!title || !routeGeoJson) {
+    return res.status(400).json({ error: "El titulo y el recorrido dibujado del evento son obligatorios." });
+  }
+
+  const client = await pool.connect();
+
+  try {
+    await client.query("BEGIN");
+    const result = await client.query(
+      `
+        INSERT INTO guia_eventos (titulo, subtitulo, tipo, fecha_texto, descripcion, color, geom)
+        VALUES ($1, $2, $3, $4, $5, $6, ST_SetSRID(ST_GeomFromGeoJSON($7), 4326))
+        RETURNING id
+      `,
+      [title, subtitle, type, dateLabel, description, routeColor, JSON.stringify(routeGeoJson)]
+    );
+    await saveFraternities(client, result.rows[0].id, normalizedFraternities);
+    await client.query("COMMIT");
+    res.status(201).json({ id: result.rows[0].id });
+  } catch (error) {
+    await client.query("ROLLBACK");
+    res.status(500).json({ error: "No se pudo guardar el evento.", details: error.message });
+  } finally {
+    client.release();
+  }
+});
+
+app.put("/admin/guides/events/:id", requireAdminAuth, async (req, res) => {
+  const eventId = Number(req.params.id);
+  const {
+    title,
+    subtitle = "",
+    type = "",
+    dateLabel = "",
+    description = "",
+    routeColor = "#dc2626",
+    route = [],
+    fraternities = [],
+  } = req.body;
+  const routeGeoJson = latLngRouteToGeoJson(route);
+  const normalizedFraternities = normalizeFraternities(fraternities);
+
+  if (!Number.isInteger(eventId)) {
+    return res.status(400).json({ error: "El id del evento es invalido." });
+  }
+
+  if (!title || !routeGeoJson) {
+    return res.status(400).json({ error: "El titulo y el recorrido dibujado del evento son obligatorios." });
+  }
+
+  const client = await pool.connect();
+
+  try {
+    await client.query("BEGIN");
+    const result = await client.query(
+      `
+        UPDATE guia_eventos
+        SET titulo = $1, subtitulo = $2, tipo = $3, fecha_texto = $4, descripcion = $5, color = $6,
+            geom = ST_SetSRID(ST_GeomFromGeoJSON($7), 4326)
+        WHERE id = $8
+        RETURNING id
+      `,
+      [title, subtitle, type, dateLabel, description, routeColor, JSON.stringify(routeGeoJson), eventId]
+    );
+
+    if (result.rowCount === 0) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ error: "El evento no existe." });
+    }
+
+    await saveFraternities(client, eventId, normalizedFraternities);
+    await client.query("COMMIT");
+    res.json({ id: eventId });
+  } catch (error) {
+    await client.query("ROLLBACK");
+    res.status(500).json({ error: "No se pudo actualizar el evento.", details: error.message });
+  } finally {
+    client.release();
+  }
+});
+
+app.delete("/admin/guides/events/:id", requireAdminAuth, async (req, res) => {
+  const eventId = Number(req.params.id);
+
+  if (!Number.isInteger(eventId)) {
+    return res.status(400).json({ error: "El id del evento es invalido." });
+  }
+
+  try {
+    const result = await pool.query("DELETE FROM guia_eventos WHERE id = $1 RETURNING id", [eventId]);
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: "El evento no existe." });
+    }
+
+    res.json({ ok: true });
+  } catch (error) {
+    res.status(500).json({ error: "No se pudo eliminar el evento.", details: error.message });
+  }
+});
+
+app.post("/admin/guides/places", requireAdminAuth, async (req, res) => {
+  const { name, category = "Referencia", description = "", lat, lng } = req.body;
+  const latitude = Number(lat);
+  const longitude = Number(lng);
+
+  if (!name || !Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+    return res.status(400).json({ error: "El nombre y el punto del lugar son obligatorios." });
+  }
+
+  try {
+    const result = await pool.query(
+      `
+        INSERT INTO guia_lugares (nombre, categoria, descripcion, geom)
+        VALUES ($1, $2, $3, ST_SetSRID(ST_MakePoint($4, $5), 4326))
+        RETURNING id
+      `,
+      [name, category, description, longitude, latitude]
+    );
+
+    res.status(201).json({ id: result.rows[0].id });
+  } catch (error) {
+    res.status(500).json({ error: "No se pudo guardar el lugar.", details: error.message });
+  }
+});
+
+app.put("/admin/guides/places/:id", requireAdminAuth, async (req, res) => {
+  const placeId = Number(req.params.id);
+  const { name, category = "Referencia", description = "", lat, lng } = req.body;
+  const latitude = Number(lat);
+  const longitude = Number(lng);
+
+  if (!Number.isInteger(placeId)) {
+    return res.status(400).json({ error: "El id del lugar es invalido." });
+  }
+
+  if (!name || !Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+    return res.status(400).json({ error: "El nombre y el punto del lugar son obligatorios." });
+  }
+
+  try {
+    const result = await pool.query(
+      `
+        UPDATE guia_lugares
+        SET nombre = $1, categoria = $2, descripcion = $3, geom = ST_SetSRID(ST_MakePoint($4, $5), 4326)
+        WHERE id = $6
+        RETURNING id
+      `,
+      [name, category, description, longitude, latitude, placeId]
+    );
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: "El lugar no existe." });
+    }
+
+    res.json({ id: placeId });
+  } catch (error) {
+    res.status(500).json({ error: "No se pudo actualizar el lugar.", details: error.message });
+  }
+});
+
+app.delete("/admin/guides/places/:id", requireAdminAuth, async (req, res) => {
+  const placeId = Number(req.params.id);
+
+  if (!Number.isInteger(placeId)) {
+    return res.status(400).json({ error: "El id del lugar es invalido." });
+  }
+
+  try {
+    const result = await pool.query("DELETE FROM guia_lugares WHERE id = $1 RETURNING id", [placeId]);
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: "El lugar no existe." });
+    }
+
+    res.json({ ok: true });
+  } catch (error) {
+    res.status(500).json({ error: "No se pudo eliminar el lugar.", details: error.message });
+  }
 });
 
 app.post("/admin/routes", requireAdminAuth, async (req, res) => {
